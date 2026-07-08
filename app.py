@@ -327,27 +327,32 @@ with left:
 
         st.markdown("**" + ("Practice volume" if is_law_firm else "Legal operations") + "**")
 
-        st.number_input(
+        st.slider(
             "Employment matters per year" if is_law_firm else "Charges/cases per year",
             min_value=0,
-            step=1,
+            max_value=1000,
+            step=5,
             key="charges_per_year",
         )
 
         if not is_law_firm:
-            st.number_input(
+            st.slider(
                 "Outside counsel cost per charge",
                 min_value=0,
+                max_value=30000,
                 step=500,
                 key="outside_counsel_cost_per_charge",
+                format="$%d",
                 help="Typical range: $10K–$20K per charge, 20–60 billed hours",
             )
 
-        st.number_input(
+        st.slider(
             "Billable rate" if is_law_firm else "Your hourly labor cost",
             min_value=0,
-            step=10,
+            max_value=1000,
+            step=5,
             key="hourly_labor_cost",
+            format="$%d",
             help="Rate you bill clients for this work"
             if is_law_firm
             else "Benchmark: ~$150/hr fully loaded ($300K / 2,000 hrs)",
@@ -363,7 +368,7 @@ with left:
         if pricing_model == "Per charge":
             st.caption(f"${st.session_state.fern_cost_per_charge}/charge")
         else:
-            st.number_input("Monthly cost", min_value=0, step=100, key="fern_monthly_fixed")
+            st.slider("Monthly cost", min_value=0, max_value=20000, step=100, key="fern_monthly_fixed", format="$%d")
 
 roi = calculate_roi(is_law_firm, scenario_cfg, pricing_model or "Per charge", st.session_state.use_ramp)
 
