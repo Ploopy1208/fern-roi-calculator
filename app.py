@@ -345,6 +345,11 @@ with left:
             max_value=1000,
             step=5,
             key="charges_per_year",
+            help="How many employment matters your firm handles per year, across all attorneys."
+            if is_law_firm
+            else "How many EEOC charges, demand letters, or similar employment disputes your "
+            "team handles per year. Count anything that currently requires drafting a position "
+            "statement or formal response — this drives every other number below.",
         )
 
         if not is_law_firm:
@@ -355,7 +360,10 @@ with left:
                 step=500,
                 key="outside_counsel_cost_per_charge",
                 format="$%d",
-                help="Typical range: $10K–$20K per charge, 20–60 billed hours",
+                help="What you currently pay an outside law firm, on average, to handle one "
+                "charge from intake to resolution — legal fees only, not settlements or "
+                "damages. Typical range: $10K–$20K per charge, 20–60 billed hours. Check a "
+                "recent invoice if you're not sure.",
             )
 
         st.slider(
@@ -365,9 +373,11 @@ with left:
             step=5,
             key="hourly_labor_cost",
             format="$%d",
-            help="Rate you bill clients for this work"
+            help="The rate you bill clients for this work — used to value the hours Fern frees up."
             if is_law_firm
-            else "Benchmark: ~$150/hr fully loaded ($300K / 2,000 hrs)",
+            else "What an hour of your (or your team's) time actually costs the company — not "
+            "just salary, but salary plus benefits and overhead. Benchmark: ~$150/hr fully "
+            "loaded ($300K / 2,000 hrs). This is what turns hours saved into a dollar figure.",
         )
 
         st.markdown("**Fern Labs pricing**")
