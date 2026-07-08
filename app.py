@@ -71,24 +71,27 @@ HOURS_WITH_FERN_PER_CHARGE = 2
 RAMP_PCT = [0.4, 0.7, 1.0]
 
 # ---- Session state defaults --------------------------------------------
-st.session_state.setdefault("buyer_type", "In-house legal/HR team")
-st.session_state.setdefault("session_mode", "Self-serve preview")
-st.session_state.setdefault("scenario_label", SCENARIOS["baseline"]["label"])
-st.session_state.setdefault("use_ramp", False)
-st.session_state.setdefault("pricing_model", "Per charge")
+DEFAULTS = {
+    "buyer_type": "In-house legal/HR team",
+    "session_mode": "Self-serve preview",
+    "scenario_label": SCENARIOS["baseline"]["label"],
+    "use_ramp": False,
+    "pricing_model": "Per charge",
+    "industry": "Technology",
+    "employee_count": 50,
+    "annual_revenue": 5_000_000,
+    "charges_per_year": 120,
+    "outside_counsel_cost_per_charge": 15000,
+    "hourly_labor_cost": 150,
+    "fern_cost_per_charge": 900,
+    "fern_monthly_fixed": 3000,
+    "lead_name": "",
+    "lead_email": "",
+    "lead_company": "",
+}
 
-st.session_state.setdefault("industry", "Technology")
-st.session_state.setdefault("employee_count", 50)
-st.session_state.setdefault("annual_revenue", 5_000_000)
-st.session_state.setdefault("charges_per_year", 120)
-st.session_state.setdefault("outside_counsel_cost_per_charge", 15000)
-st.session_state.setdefault("hourly_labor_cost", 150)
-st.session_state.setdefault("fern_cost_per_charge", 900)
-st.session_state.setdefault("fern_monthly_fixed", 3000)
-
-st.session_state.setdefault("lead_name", "")
-st.session_state.setdefault("lead_email", "")
-st.session_state.setdefault("lead_company", "")
+for _key, _value in DEFAULTS.items():
+    st.session_state.setdefault(_key, _value)
 
 
 def apply_preset(key):
@@ -96,6 +99,11 @@ def apply_preset(key):
     for field in ["industry", "employee_count", "annual_revenue", "charges_per_year",
                   "outside_counsel_cost_per_charge", "hourly_labor_cost"]:
         st.session_state[field] = preset[field]
+
+
+def reset_inputs():
+    for key, value in DEFAULTS.items():
+        st.session_state[key] = value
 
 
 def format_currency(num):
@@ -308,7 +316,9 @@ left, right = st.columns(2, gap="large")
 # ---- Input section -----------------------------------------------------
 with left:
     with st.container(border=True):
-        st.subheader("Your details")
+        with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):
+            st.subheader("Your details")
+            st.button("Reset", icon=":material/refresh:", on_click=reset_inputs, key="reset_button")
 
         st.selectbox(
             "Industry",
