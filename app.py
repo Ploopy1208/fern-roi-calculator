@@ -3,9 +3,11 @@ from datetime import date
 
 st.set_page_config(
     page_title="Fern Labs ROI calculator",
-    page_icon=":material/calculate:",
+    page_icon="assets/fern-favicon-32x32.png",
     layout="wide",
 )
+
+st.logo("assets/fern-logo.svg", link="https://www.fernlabs.ai", size="large")
 
 # ---- Scenario configs -------------------------------------------------
 SCENARIOS = {
