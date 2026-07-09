@@ -10,16 +10,18 @@ st.set_page_config(
 st.logo("assets/fern-logo.svg", link="https://www.fernlabs.ai", size="large")
 
 # ---- Scenario configs -------------------------------------------------
+# hours_saved_per_charge is Fern's assumed savings vs. the 20 hr/charge baseline,
+# for each starting-point tool (this is the "Fern savings assumption" per scenario).
 SCENARIOS = {
     "baseline": {
         "label": "Starting from scratch",
-        "hours_multiplier": 1.0,
+        "hours_saved_per_charge": 18,
         "outside_counsel_multiplier": 1.0,
         "note": "No existing AI tool for employment disputes — Fern delivers full value.",
     },
     "copilot": {
         "label": "Already have Microsoft CoPilot",
-        "hours_multiplier": 0.85,
+        "hours_saved_per_charge": 17,
         "outside_counsel_multiplier": 1.0,
         "note": "CoPilot isn't fine-tuned on employment law and can misread legal terms or "
         "invent facts, so it saves a little drafting time but rarely reduces reliance on "
@@ -27,7 +29,7 @@ SCENARIOS = {
     },
     "harvey": {
         "label": "Already have Harvey",
-        "hours_multiplier": 0.7,
+        "hours_saved_per_charge": 14,
         "outside_counsel_multiplier": 0.95,
         "note": "General legal AI can speed up research and orientation, but unreliable "
         "citations mean your team still verifies most output by hand.",
@@ -69,7 +71,6 @@ PRESETS = {
 LOGOS = ["Tesla", "Cisco", "Citibank", "GKN Aerospace", "Oracle", "Under Armour", "Adobe", "Walmart", "Intuit", "Lucid"]
 
 HOURS_PER_CHARGE_BASE = 20
-HOURS_WITH_FERN_PER_CHARGE = 2
 RAMP_PCT = [0.4, 0.7, 1.0]
 
 # ---- Session state defaults --------------------------------------------
@@ -83,6 +84,7 @@ DEFAULTS = {
     "employee_count": 50,
     "annual_revenue": 5_000_000,
     "charges_per_year": 120,
+    "inhouse_pct": 75,
     "outside_counsel_cost_per_charge": 15000,
     "hourly_labor_cost": 150,
     "fern_cost_per_charge": 900,
@@ -118,19 +120,30 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
     hourly_labor_cost = st.session_state.hourly_labor_cost
     fern_cost_per_charge = st.session_state.fern_cost_per_charge
     fern_monthly_fixed = st.session_state.fern_monthly_fixed
+    inhouse_pct = st.session_state.inhouse_pct / 100
 
-    effective_hours_saved_per_charge = HOURS_PER_CHARGE_BASE * scenario_cfg["hours_multiplier"]
-    total_hours_saved = charges_per_year * effective_hours_saved_per_charge
-
-    # In-house: hours freed = cost avoided (they'd otherwise pay that salary time anyway).
-    # Law firm: hours freed = billable capacity unlocked (a revenue opportunity, not a cost cut),
-    # and "outside counsel avoided" doesn't apply since the firm IS outside counsel.
-    hour_value = total_hours_saved * hourly_labor_cost
-
+    effective_hours_saved_per_charge = scenario_cfg["hours_saved_per_charge"]
+    hours_with_fern_per_charge = HOURS_PER_CHARGE_BASE - effective_hours_saved_per_charge
     effective_outside_counsel_per_charge = outside_counsel_cost_per_charge * scenario_cfg["outside_counsel_multiplier"]
-    outside_counsel_savings = 0 if is_law_firm else charges_per_year * effective_outside_counsel_per_charge
 
-    total_value_year1_full = hour_value + outside_counsel_savings
+    if is_law_firm:
+        # A law firm IS outside counsel, so every matter is "in-house" to the firm —
+        # there's no split, and hours freed are billable capacity unlocked, not cost avoided.
+        charges_inhouse = charges_per_year
+        charges_outside = 0
+        total_hours_saved = charges_inhouse * effective_hours_saved_per_charge
+        inhouse_time_savings = total_hours_saved * hourly_labor_cost
+        outside_fees_savings = 0
+    else:
+        # In-house: charges split between work handled internally (time saved, valued at
+        # the internal hourly rate) and work sent to outside counsel (fee avoided entirely).
+        charges_inhouse = charges_per_year * inhouse_pct
+        charges_outside = charges_per_year - charges_inhouse
+        total_hours_saved = charges_inhouse * effective_hours_saved_per_charge
+        inhouse_time_savings = total_hours_saved * hourly_labor_cost
+        outside_fees_savings = charges_outside * effective_outside_counsel_per_charge
+
+    total_value_year1_full = inhouse_time_savings + outside_fees_savings
 
     fern_annual_cost = (
         charges_per_year * fern_cost_per_charge
@@ -159,10 +172,13 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
 
     return {
         "effective_hours_saved_per_charge": effective_hours_saved_per_charge,
+        "hours_with_fern_per_charge": hours_with_fern_per_charge,
+        "charges_inhouse": charges_inhouse,
+        "charges_outside": charges_outside,
         "total_hours_saved": total_hours_saved,
-        "hour_value": hour_value,
+        "inhouse_time_savings": inhouse_time_savings,
         "effective_outside_counsel_per_charge": effective_outside_counsel_per_charge,
-        "outside_counsel_savings": outside_counsel_savings,
+        "outside_fees_savings": outside_fees_savings,
         "total_value_year1_full": total_value_year1_full,
         "fern_annual_cost": fern_annual_cost,
         "net_value_year1_full": net_value_year1_full,
@@ -170,23 +186,35 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
         "money_multiple": money_multiple,
         "yearly_ramp": yearly_ramp,
         "three_year_net": three_year_net,
+        "three_year_cost": three_year_cost,
         "roi_3_year": max(0, roi_3_year),
     }
 
 
 def build_case_study_text(is_law_firm, session_mode, scenario_cfg, roi, use_ramp):
-    value_label = "Billable capacity unlocked" if is_law_firm else "Labor cost freed up"
+    value_label = "Billable capacity unlocked" if is_law_firm else "Inhouse time savings"
     prepared_for = ""
     if session_mode == "Work through this with a Fern rep":
         company = f" — {st.session_state.lead_company}" if st.session_state.lead_company.strip() else ""
         prepared_for = f"Prepared for: {st.session_state.lead_name} ({st.session_state.lead_email}){company}\n"
 
-    outside_counsel_line = "" if is_law_firm else f"Outside counsel avoided: {format_currency(roi['outside_counsel_savings'])}\n"
+    outside_counsel_line = (
+        ""
+        if is_law_firm
+        else f"Outside fees savings: {format_currency(roi['outside_fees_savings'])}\n"
+        f"  ({round(roi['charges_outside']):,} charges x {format_currency(roi['effective_outside_counsel_per_charge'])}/charge)\n"
+    )
     law_firm_note = (
         "Note: assumes freed hours convert to billed hours at your stated rate — actual value "
         "depends on your utilization and realization rates.\n"
         if is_law_firm
         else ""
+    )
+    split_line = (
+        ""
+        if is_law_firm
+        else f"Handled in-house: {st.session_state.inhouse_pct}% ({round(roi['charges_inhouse']):,} charges) — "
+        f"Outside counsel: {100 - st.session_state.inhouse_pct}% ({round(roi['charges_outside']):,} charges)\n"
     )
 
     return f"""FERN LABS — PERSONALIZED ROI CASE STUDY
@@ -201,18 +229,19 @@ Annual revenue: {format_currency(st.session_state.annual_revenue)}
 
 USAGE ESTIMATES
 Charges/matters per year: {st.session_state.charges_per_year}
-{'Billable rate' if is_law_firm else 'Hourly labor cost'}: {format_currency(st.session_state.hourly_labor_cost)}
+{split_line}{'Billable rate' if is_law_firm else 'Inhouse effective hourly rate'}: {format_currency(st.session_state.hourly_labor_cost)}
 {'' if is_law_firm else f"Outside counsel cost per charge: {format_currency(st.session_state.outside_counsel_cost_per_charge)}"}
 
 SCENARIO ADJUSTMENT
 {scenario_cfg['note']}
-Effective hours saved per charge: {roi['effective_hours_saved_per_charge']:.1f} (vs. {HOURS_PER_CHARGE_BASE} baseline)
+Fern savings assumption — hours saved per charge: {roi['effective_hours_saved_per_charge']:.1f} of {HOURS_PER_CHARGE_BASE} hrs baseline
+(No tool: 18 hrs | CoPilot: 17 hrs | Harvey: 14 hrs)
 
 ANNUAL VALUE BREAKDOWN (Year 1, full value)
 ------------------------------------
-{value_label}: {format_currency(roi['hour_value'])}
+{value_label}: {format_currency(roi['inhouse_time_savings'])}
   ({round(roi['total_hours_saved']):,} hours x {format_currency(st.session_state.hourly_labor_cost)}/hr)
-{outside_counsel_line}Total gross value: {format_currency(roi['total_value_year1_full'])}
+{outside_counsel_line}Total value: {format_currency(roi['total_value_year1_full'])}
 Fern Labs annual cost: {format_currency(roi['fern_annual_cost'])}
 ------------------------------------
 NET ANNUAL VALUE (Year 1): {format_currency(roi['net_value_year1_full'])}
@@ -227,7 +256,7 @@ Payback period: {roi['payback_months']:.1f} months
 TIME SAVED
 ------------------------------------
 Total hours freed annually: {round(roi['total_hours_saved']):,} hours
-Per-charge turnaround: ~{HOURS_PER_CHARGE_BASE} hrs -> ~{HOURS_WITH_FERN_PER_CHARGE} hrs with Fern
+Per-charge turnaround: ~{HOURS_PER_CHARGE_BASE} hrs -> ~{roi['hours_with_fern_per_charge']:.0f} hrs with Fern
 
 PROOF POINT
 ------------------------------------
@@ -251,6 +280,70 @@ typically fully running within 2 weeks.
 
 Questions? Contact sales@fernlabs.com
 """.strip()
+
+
+def build_math_text(is_law_firm, scenario_key, scenario_cfg, roi):
+    assumptions = "\n".join(
+        f"  {'-> ' if key == scenario_key else '   '}{cfg['label']}: {cfg['hours_saved_per_charge']} hrs saved "
+        f"(of {HOURS_PER_CHARGE_BASE} hr baseline)"
+        for key, cfg in SCENARIOS.items()
+    )
+
+    hours_line = (
+        f"Hours saved = matters/year x hours saved per charge\n"
+        f"= {round(roi['charges_inhouse']):,} x {roi['effective_hours_saved_per_charge']:.1f} hrs "
+        f"= {round(roi['total_hours_saved']):,} hrs"
+        if is_law_firm
+        else f"Hours saved = in-house charges x hours saved per charge\n"
+        f"= {round(roi['charges_inhouse']):,} x {roi['effective_hours_saved_per_charge']:.1f} hrs "
+        f"= {round(roi['total_hours_saved']):,} hrs"
+    )
+
+    inhouse_line = (
+        f"{'Billable capacity unlocked' if is_law_firm else 'Inhouse time savings'} = hours saved x "
+        f"{'billable rate' if is_law_firm else 'inhouse effective hourly rate'}\n"
+        f"= {round(roi['total_hours_saved']):,} x {format_currency(st.session_state.hourly_labor_cost)} "
+        f"= {format_currency(roi['inhouse_time_savings'])}"
+    )
+
+    outside_block = (
+        ""
+        if is_law_firm
+        else f"""
+
+Outside fees savings = outside-counsel charges x cost per charge
+= {round(roi['charges_outside']):,} x {format_currency(roi['effective_outside_counsel_per_charge'])} \
+= {format_currency(roi['outside_fees_savings'])}
+
+Total value = Inhouse time savings + Outside fees savings
+= {format_currency(roi['inhouse_time_savings'])} + {format_currency(roi['outside_fees_savings'])} \
+= {format_currency(roi['total_value_year1_full'])}"""
+    )
+
+    total_value_line = (
+        f"\n\nTotal value = Billable capacity unlocked\n= {format_currency(roi['total_value_year1_full'])}"
+        if is_law_firm
+        else ""
+    )
+
+    return f"""FERN SAVINGS ASSUMPTIONS (hours saved per charge, by current tool)
+{assumptions}
+
+{hours_line}
+
+{inhouse_line}{outside_block}{total_value_line}
+
+Net value = Total value - Fern annual cost
+= {format_currency(roi['total_value_year1_full'])} - {format_currency(roi['fern_annual_cost'])} \
+= {format_currency(roi['net_value_year1_full'])}
+
+Payback period = Fern annual cost / (Total value / 12)
+= {format_currency(roi['fern_annual_cost'])} / ({format_currency(roi['total_value_year1_full'])} / 12) \
+= {roi['payback_months']:.1f} months
+
+3-year ROI = (3-year net value / 3-year Fern cost) x 100
+= ({format_currency(roi['three_year_net'])} / {format_currency(roi['three_year_cost'])}) x 100 \
+= {roi['roi_3_year']:.1f}%""".strip()
 
 
 # ---- Header --------------------------------------------------------------
@@ -354,6 +447,25 @@ with left:
 
         if not is_law_firm:
             st.slider(
+                "% of charges handled in-house",
+                min_value=0,
+                max_value=100,
+                step=5,
+                key="inhouse_pct",
+                format="%d%%",
+                help="What share of your charges your own team handles, versus sending to "
+                "outside counsel. In-house charges save time (valued at your effective hourly "
+                "rate below); charges sent to outside counsel instead save that firm's fee "
+                "entirely, since Fern lets you bring the work in-house.",
+            )
+            charges_inhouse_n = round(st.session_state.charges_per_year * st.session_state.inhouse_pct / 100)
+            charges_outside_n = st.session_state.charges_per_year - charges_inhouse_n
+            st.caption(
+                f"{st.session_state.inhouse_pct}% in-house ({charges_inhouse_n:,} charges) · "
+                f"{100 - st.session_state.inhouse_pct}% outside counsel ({charges_outside_n:,} charges)"
+            )
+
+            st.slider(
                 "Outside counsel cost per charge",
                 min_value=0,
                 max_value=30000,
@@ -367,7 +479,7 @@ with left:
             )
 
         st.slider(
-            "Billable rate" if is_law_firm else "Your hourly labor cost",
+            "Billable rate" if is_law_firm else "Inhouse effective hourly rate",
             min_value=0,
             max_value=1000,
             step=5,
@@ -377,7 +489,8 @@ with left:
             if is_law_firm
             else "What an hour of your (or your team's) time actually costs the company — not "
             "just salary, but salary plus benefits and overhead. Benchmark: ~$150/hr fully "
-            "loaded ($300K / 2,000 hrs). This is what turns hours saved into a dollar figure.",
+            "loaded ($300K / 2,000 hrs). This is what turns hours saved into a dollar figure "
+            "for charges handled in-house.",
         )
 
         st.markdown("**Fern Labs pricing**")
@@ -425,7 +538,10 @@ with right:
             f"{round(roi['total_hours_saved']):,} hours",
             border=True,
         )
-        st.caption(f"Each charge drops from ~{HOURS_PER_CHARGE_BASE} hrs to ~{HOURS_WITH_FERN_PER_CHARGE} hrs with Fern")
+        st.caption(
+            f"Each {'matter' if is_law_firm else 'in-house charge'} drops from ~{HOURS_PER_CHARGE_BASE} hrs to "
+            f"~{roi['hours_with_fern_per_charge']:.0f} hrs with Fern ({scenario_cfg['label']})"
+        )
 
         if session_mode == "Work through this with a Fern rep":
             with st.container(border=True):
@@ -456,15 +572,18 @@ with right:
 
         total = roi["total_value_year1_full"]
 
-        st.write(("Billable capacity unlocked" if is_law_firm else "Labor freed up") + f" — {format_currency(roi['hour_value'])}")
-        st.progress(min(1.0, roi["hour_value"] / total) if total > 0 else 0.0)
+        st.write(
+            ("Billable capacity unlocked" if is_law_firm else "Inhouse time savings")
+            + f" — {format_currency(roi['inhouse_time_savings'])}"
+        )
+        st.progress(min(1.0, roi["inhouse_time_savings"] / total) if total > 0 else 0.0)
 
         if not is_law_firm:
-            st.write(f"Outside counsel avoided — {format_currency(roi['outside_counsel_savings'])}")
-            st.progress(min(1.0, roi["outside_counsel_savings"] / total) if total > 0 else 0.0)
+            st.write(f"Outside fees savings — {format_currency(roi['outside_fees_savings'])}")
+            st.progress(min(1.0, roi["outside_fees_savings"] / total) if total > 0 else 0.0)
 
         with st.container(horizontal=True, horizontal_alignment="distribute"):
-            st.markdown("**Gross annual value**")
+            st.markdown("**Total value**")
             st.markdown(f"**{format_currency(roi['total_value_year1_full'])}**")
 
         with st.container(horizontal=True, horizontal_alignment="distribute"):
@@ -496,20 +615,7 @@ with right:
 
     # ---- Show the math ----
     with st.expander("Show the math", icon=":material/functions:"):
-        st.code(
-            f"""Hours saved = charges/year x hours saved per charge (adjusted for your current tools)
-= {st.session_state.charges_per_year} x {roi['effective_hours_saved_per_charge']:.1f} hrs = {round(roi['total_hours_saved']):,} hrs
-
-{'Billable capacity unlocked' if is_law_firm else 'Labor savings'} = hours saved x {'billable rate' if is_law_firm else 'hourly rate'}
-= {round(roi['total_hours_saved']):,} x {format_currency(st.session_state.hourly_labor_cost)} = {format_currency(roi['hour_value'])}
-{"" if is_law_firm else f'''
-Outside counsel avoided = charges/year x cost avoided per charge
-= {st.session_state.charges_per_year} x {format_currency(roi['effective_outside_counsel_per_charge'])} = {format_currency(roi['outside_counsel_savings'])}
-'''}
-Net value = total value - Fern annual cost
-= {format_currency(roi['total_value_year1_full'])} - {format_currency(roi['fern_annual_cost'])} = {format_currency(roi['net_value_year1_full'])}""",
-            language=None,
-        )
+        st.code(build_math_text(is_law_firm, scenario_key, scenario_cfg, roi), language=None)
 
 # ---- Methodology / trust footer -----------------------------------------
 with st.container(border=True):
