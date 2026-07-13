@@ -1,5 +1,7 @@
 import streamlit as st
 import requests
+import altair as alt
+import pandas as pd
 from datetime import datetime
 
 st.set_page_config(
@@ -30,15 +32,18 @@ SCENARIOS = {
     },
 }
 
-# ---- Proof point logos (F-1000 customer advisory board, per sales deck) -
-LOGOS = ["Tesla", "Cisco", "Citibank", "GKN Aerospace", "Oracle", "Under Armour", "Adobe", "Walmart", "Intuit", "Lucid"]
-
 HOURS_PER_CHARGE_BASE = 20
 RAMP_PCT = [0.4, 0.7, 1.0]
 
 # ---- Inhouse fully-loaded hourly rate: (annual salary x loaded-cost multiplier) / hrs per year
 LOADED_COST_MULTIPLIER = 1.5
 WORK_HOURS_PER_YEAR = 1920  # 40 hrs/week x 48 weeks/year
+
+# ---- Brand chart colors (from fernlabs.ai's own palette) ----------------
+FERN_FOREST = "#1a3d26"  # darkest — net value (the headline number)
+FERN_GREEN = "#285638"  # primary — main value component
+FERN_PALE = "#6da67a"  # lighter — secondary value component
+FERN_AMBER = "#c97b2a"  # distinct hue — cost, never confused with value
 
 # ---- Session state defaults --------------------------------------------
 DEFAULTS = {
@@ -77,6 +82,40 @@ def reset_inputs():
 
 def format_currency(num):
     return f"${round(num):,}"
+
+
+def breakdown_chart(rows):
+    """Horizontal bar chart for a small set of named dollar amounts.
+
+    rows: list of (label, amount, color) tuples, in top-to-bottom display order.
+    """
+    df = pd.DataFrame(rows, columns=["Category", "Amount", "Color"])
+    order = df["Category"].tolist()
+    colors = df["Color"].tolist()
+
+    bars = (
+        alt.Chart(df)
+        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, height=26)
+        .encode(
+            x=alt.X("Amount:Q", title=None, axis=alt.Axis(format="$,.0f", grid=False)),
+            y=alt.Y("Category:N", title=None, sort=order, axis=alt.Axis(labelLimit=160)),
+            color=alt.Color("Category:N", scale=alt.Scale(domain=order, range=colors), legend=None),
+            tooltip=[
+                alt.Tooltip("Category:N", title="Category"),
+                alt.Tooltip("Amount:Q", title="Amount", format="$,.0f"),
+            ],
+        )
+    )
+    labels = (
+        alt.Chart(df)
+        .mark_text(align="left", dx=6, color="#1a1a18")
+        .encode(
+            x=alt.X("Amount:Q"),
+            y=alt.Y("Category:N", sort=order),
+            text=alt.Text("Amount:Q", format="$,.0f"),
+        )
+    )
+    return (bars + labels).properties(height=len(df) * 42 + 20)
 
 
 def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
@@ -238,7 +277,7 @@ PROOF POINT
 One customer's legal team went from uploading source documents to an EEOC-ready
 position statement in about two hours total, versus a full day or more manually.
 Fern's approach is shaped by a Customer Advisory Board of F-1000 senior employment
-lawyers at companies including Tesla, Cisco, Adobe, and Walmart.
+lawyers.
 
 METHODOLOGY
 ------------------------------------
@@ -601,36 +640,25 @@ with right:
     with st.container(border=True):
         st.subheader("Annual " + ("value" if is_law_firm else "savings") + " breakdown")
 
-        total = roi["total_value_year1_full"]
+        rows = []
+        if is_law_firm:
+            rows.append(("Billable capacity unlocked", roi["inhouse_time_savings"], FERN_GREEN))
+        else:
+            rows.append(("Inhouse time savings", roi["inhouse_time_savings"], FERN_GREEN))
+            rows.append(("Outside fees savings", roi["outside_fees_savings"], FERN_PALE))
+        rows.append(("Fern cost", roi["fern_annual_cost"], FERN_AMBER))
+        rows.append(("Net annual value", roi["net_value_year1_full"], FERN_FOREST))
 
-        st.write(
-            ("Billable capacity unlocked" if is_law_firm else "Inhouse time savings")
-            + f" — {format_currency(roi['inhouse_time_savings'])}"
-        )
-        st.progress(min(1.0, roi["inhouse_time_savings"] / total) if total > 0 else 0.0)
-
-        if not is_law_firm:
-            st.write(f"Outside fees savings — {format_currency(roi['outside_fees_savings'])}")
-            st.progress(min(1.0, roi["outside_fees_savings"] / total) if total > 0 else 0.0)
-
-        with st.container(horizontal=True, horizontal_alignment="distribute"):
-            st.markdown("**Total value**")
-            st.markdown(f"**{format_currency(roi['total_value_year1_full'])}**")
-
-        with st.container(horizontal=True, horizontal_alignment="distribute"):
-            st.caption("Less: Fern cost")
-            st.caption(f"({format_currency(roi['fern_annual_cost'])})")
-
-        with st.container(horizontal=True, horizontal_alignment="distribute"):
-            st.markdown("**Net annual value**")
-            st.markdown(f"**{format_currency(roi['net_value_year1_full'])}**")
+        st.altair_chart(breakdown_chart(rows), width="stretch")
 
         if st.session_state.use_ramp:
-            st.markdown("**3-year adoption ramp**")
-            for i, y in enumerate(roi["yearly_ramp"]):
-                with st.container(horizontal=True, horizontal_alignment="distribute"):
-                    st.caption(f"Year {i + 1} ({y['pct'] * 100:.0f}% adoption)")
-                    st.caption(format_currency(y["net"]))
+            st.markdown("**3-year adoption ramp — net value**")
+            ramp_colors = [FERN_PALE, FERN_GREEN, FERN_FOREST]
+            ramp_rows = [
+                (f"Year {i + 1} ({y['pct'] * 100:.0f}% adoption)", y["net"], ramp_colors[i])
+                for i, y in enumerate(roi["yearly_ramp"])
+            ]
+            st.altair_chart(breakdown_chart(ramp_rows), width="stretch")
 
     # ---- Proof point ----
     with st.container(border=True):
@@ -639,10 +667,7 @@ with right:
             "One customer's legal team went from uploading source documents to an EEOC-ready "
             "position statement in about two hours total — down from a full day or more done manually."
         )
-        st.caption("Shaped by our Customer Advisory Board — current & former counsel at")
-        with st.container(horizontal=True):
-            for name in LOGOS:
-                st.badge(name)
+        st.caption("Shaped by our Customer Advisory Board of F-1000 senior employment lawyers.")
 
     # ---- Show the math ----
     with st.expander("Show the math", icon=":material/functions:"):
