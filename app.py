@@ -3,7 +3,7 @@ import requests
 from datetime import datetime
 
 st.set_page_config(
-    page_title="Fern Labs ROI calculator",
+    page_title="Fern ROI calculator",
     page_icon="assets/fern-favicon-32x32.png",
     layout="wide",
 )
@@ -20,51 +20,13 @@ SCENARIOS = {
         "outside_counsel_multiplier": 1.0,
         "note": "No existing AI tool for employment disputes — Fern delivers full value.",
     },
-    "copilot": {
-        "label": "Already have Microsoft CoPilot",
-        "hours_saved_per_charge": 17,
-        "outside_counsel_multiplier": 1.0,
-        "note": "CoPilot isn't fine-tuned on employment law and can misread legal terms or "
-        "invent facts, so it saves a little drafting time but rarely reduces reliance on "
-        "outside counsel.",
-    },
-    "harvey": {
-        "label": "Already have Harvey",
-        "hours_saved_per_charge": 14,
-        "outside_counsel_multiplier": 0.95,
-        "note": "General legal AI can speed up research and orientation, but unreliable "
-        "citations mean your team still verifies most output by hand.",
-    },
-}
-
-# ---- Company presets (in-house buyer only) -----------------------------
-PRESETS = {
-    "largeTech": {
-        "label": "Large tech enterprise",
-        "industry": "Technology",
-        "employee_count": 8000,
-        "annual_revenue": 15_000_000_000,
-        "charges_per_year": 260,
-        "outside_counsel_cost_per_charge": 18000,
-        "annual_salary": 282_000,
-    },
-    "smallTech": {
-        "label": "Small tech company",
-        "industry": "Technology",
-        "employee_count": 180,
-        "annual_revenue": 40_000_000,
-        "charges_per_year": 12,
-        "outside_counsel_cost_per_charge": 12000,
-        "annual_salary": 192_000,
-    },
-    "largeHourly": {
-        "label": "Large hourly workforce",
-        "industry": "Manufacturing",
-        "employee_count": 45000,
-        "annual_revenue": 90_000_000_000,
-        "charges_per_year": 550,
-        "outside_counsel_cost_per_charge": 14000,
-        "annual_salary": 154_000,
+    "existing": {
+        "label": "Already have an in-house legal tool",
+        "hours_saved_per_charge": 15,
+        "outside_counsel_multiplier": 0.97,
+        "note": "General-purpose or in-house tools help a little with drafting and research, "
+        "but aren't purpose-built for employment law charges — your team still does "
+        "significant manual review, and reliance on outside counsel stays about the same.",
     },
 }
 
@@ -102,13 +64,6 @@ DEFAULTS = {
 
 for _key, _value in DEFAULTS.items():
     st.session_state.setdefault(_key, _value)
-
-
-def apply_preset(key):
-    preset = PRESETS[key]
-    for field in ["industry", "employee_count", "annual_revenue", "charges_per_year",
-                  "outside_counsel_cost_per_charge", "annual_salary"]:
-        st.session_state[field] = preset[field]
 
 
 def inhouse_hourly_rate():
@@ -231,7 +186,7 @@ def build_case_study_text(is_law_firm, session_mode, scenario_cfg, roi, use_ramp
         f"Outside counsel: {100 - st.session_state.inhouse_pct}% ({round(roi['charges_outside']):,} charges)\n"
     )
 
-    return f"""FERN LABS — PERSONALIZED ROI CASE STUDY
+    return f"""FERN — PERSONALIZED ROI CASE STUDY
 Generated: {datetime.now().strftime('%m/%d/%Y')}
 Buyer type: {'Law firm / outside counsel' if is_law_firm else 'In-house legal/HR team'}
 Scenario: {scenario_cfg['label']}
@@ -255,14 +210,14 @@ Charges/matters per year: {st.session_state.charges_per_year}
 SCENARIO ADJUSTMENT
 {scenario_cfg['note']}
 Fern savings assumption — hours saved per charge: {roi['effective_hours_saved_per_charge']:.1f} of {HOURS_PER_CHARGE_BASE} hrs baseline
-(No tool: 18 hrs | CoPilot: 17 hrs | Harvey: 14 hrs)
+({' | '.join(f"{cfg['label']}: {cfg['hours_saved_per_charge']} hrs" for cfg in SCENARIOS.values())})
 
 ANNUAL VALUE BREAKDOWN (Year 1, full value)
 ------------------------------------
 {value_label}: {format_currency(roi['inhouse_time_savings'])}
   ({round(roi['total_hours_saved']):,} hours x {format_currency(roi['hourly_rate'])}/hr)
 {outside_counsel_line}Total value: {format_currency(roi['total_value_year1_full'])}
-Fern Labs annual cost: {format_currency(roi['fern_annual_cost'])}
+Fern annual cost: {format_currency(roi['fern_annual_cost'])}
 ------------------------------------
 NET ANNUAL VALUE (Year 1): {format_currency(roi['net_value_year1_full'])}
 {law_firm_note}
@@ -291,8 +246,8 @@ Assumptions are conservative estimates for internal discussion purposes only, de
 with input from Fern's Customer Advisory Board. Actual results vary by case complexity
 and adoption speed. This is not a guarantee.
 
-About Fern Labs
-Fern Labs (Fern AI) is a purpose-built AI platform for employment law charges and
+About Fern
+Fern is a purpose-built AI platform for employment law charges and
 demand letters. It runs an end-to-end workflow — claim analysis, evidence extraction,
 and draft generation — grounded in employment law, with every factual claim tied to a
 specific exhibit so counsel can verify it. Unlimited users, no setup fee. Teams are
@@ -418,7 +373,7 @@ def notify_slack(is_law_firm, session_mode, scenario_cfg, roi):
 
 
 # ---- Header --------------------------------------------------------------
-st.title("Fern Labs ROI calculator", text_alignment="center")
+st.title("Fern ROI calculator", text_alignment="center")
 st.caption("See your personalized value on employment charges and demand letters", text_alignment="center")
 
 # ---- Buyer segmentation ---------------------------------------------------
@@ -452,15 +407,6 @@ with st.container(border=True):
     scenario_key = scenario_keys[scenario_labels.index(scenario_label)] if scenario_label else "baseline"
     scenario_cfg = SCENARIOS[scenario_key]
     st.caption(f":material/info: {scenario_cfg['note']}")
-
-# ---- Company presets (in-house only) --------------------------------------
-if not is_law_firm:
-    with st.container(border=True):
-        st.subheader("Quick-fill a company profile (optional)")
-        with st.container(horizontal=True):
-            for key, preset in PRESETS.items():
-                st.button(preset["label"], key=f"preset_{key}", on_click=apply_preset, args=(key,))
-        st.caption("Prefills industry, size, and cost assumptions — every field stays editable after.")
 
 # ---- Session mode ----------------------------------------------------------
 with st.container(border=True):
@@ -576,7 +522,7 @@ with left:
                 f"(salary × {LOADED_COST_MULTIPLIER} for benefits/overhead ÷ {WORK_HOURS_PER_YEAR:,} hrs/yr)"
             )
 
-        st.markdown("**Fern Labs pricing**")
+        st.markdown("**Fern pricing**")
         pricing_model = st.segmented_control(
             "Pricing model",
             ["Per charge", "Monthly"],
@@ -594,6 +540,16 @@ roi = calculate_roi(is_law_firm, scenario_cfg, pricing_model or "Per charge", st
 with right:
     with st.container(border=True):
         st.subheader("Your ROI results")
+
+        st.metric(
+            "Time saved annually",
+            f"{round(roi['total_hours_saved']):,} hours",
+            border=True,
+        )
+        st.caption(
+            f"Each {'matter' if is_law_firm else 'in-house charge'} drops from ~{HOURS_PER_CHARGE_BASE} hrs to "
+            f"~{roi['hours_with_fern_per_charge']:.0f} hrs with Fern ({scenario_cfg['label']})"
+        )
 
         st.metric(
             "Year 1 net value" if is_law_firm else "Year 1 net savings",
@@ -614,16 +570,6 @@ with right:
         st.toggle(
             "Use conservative 3-year adoption ramp (40% → 70% → 100%) instead of full value from Year 1",
             key="use_ramp",
-        )
-
-        st.metric(
-            "Time saved annually",
-            f"{round(roi['total_hours_saved']):,} hours",
-            border=True,
-        )
-        st.caption(
-            f"Each {'matter' if is_law_firm else 'in-house charge'} drops from ~{HOURS_PER_CHARGE_BASE} hrs to "
-            f"~{roi['hours_with_fern_per_charge']:.0f} hrs with Fern ({scenario_cfg['label']})"
         )
 
         if session_mode == "Work through this with a Fern rep":
@@ -672,7 +618,7 @@ with right:
             st.markdown(f"**{format_currency(roi['total_value_year1_full'])}**")
 
         with st.container(horizontal=True, horizontal_alignment="distribute"):
-            st.caption("Less: Fern Labs cost")
+            st.caption("Less: Fern cost")
             st.caption(f"({format_currency(roi['fern_annual_cost'])})")
 
         with st.container(horizontal=True, horizontal_alignment="distribute"):
