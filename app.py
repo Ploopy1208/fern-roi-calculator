@@ -3,6 +3,7 @@ import requests
 import altair as alt
 import pandas as pd
 from datetime import datetime
+from fpdf import FPDF
 
 st.set_page_config(
     page_title="Fern ROI calculator",
@@ -199,101 +200,175 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
     }
 
 
-def build_case_study_text(is_law_firm, session_mode, scenario_cfg, roi, use_ramp):
-    value_label = "Billable capacity unlocked" if is_law_firm else "Inhouse time savings"
-    prepared_for = ""
-    if session_mode == "Work through this with a Fern rep":
+def _hex_rgb(hex_color):
+    hex_color = hex_color.lstrip("#")
+    return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+
+
+_PDF_CHAR_REPLACEMENTS = {
+    "—": "-",  # em dash
+    "–": "-",  # en dash
+    "‘": "'",
+    "’": "'",
+    "“": '"',
+    "”": '"',
+    "…": "...",
+    "→": "->",
+}
+
+
+def _pdf_safe(text):
+    """Core PDF fonts (Helvetica) only support latin-1 — swap typographic
+    punctuation for ASCII equivalents and drop anything else that can't encode."""
+    for bad, good in _PDF_CHAR_REPLACEMENTS.items():
+        text = text.replace(bad, good)
+    return text.encode("latin-1", "replace").decode("latin-1")
+
+
+def build_case_study_pdf(is_law_firm, session_mode, scenario_cfg, roi, use_ramp):
+    pdf = FPDF(unit="mm", format="Letter")
+    pdf.set_auto_page_break(auto=True, margin=14)
+    pdf.set_margins(18, 14, 18)
+    pdf.add_page()
+
+    def h1(text):
+        pdf.set_font("Helvetica", "B", 20)
+        pdf.set_text_color(*_hex_rgb(FERN_FOREST))
+        pdf.cell(0, 9, _pdf_safe(text), new_x="LMARGIN", new_y="NEXT")
+
+    def h2(text):
+        pdf.ln(2)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(*_hex_rgb(FERN_GREEN))
+        pdf.cell(0, 6, _pdf_safe(text.upper()), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_draw_color(*_hex_rgb(FERN_PALE))
+        pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+        pdf.ln(1.5)
+
+    def body(text, size=9):
+        pdf.set_font("Helvetica", "", size)
+        pdf.set_text_color(60, 60, 56)
+        pdf.multi_cell(0, 4.5, _pdf_safe(text))
+
+    def kv_row(label, value):
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(90, 90, 86)
+        pdf.cell(85, 5.5, _pdf_safe(label))
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_text_color(*_hex_rgb(FERN_FOREST))
+        pdf.cell(0, 5.5, _pdf_safe(value), new_x="LMARGIN", new_y="NEXT")
+
+    # ---- Header ----
+    h1("Fern")
+    pdf.set_font("Helvetica", "", 12)
+    pdf.set_text_color(90, 90, 86)
+    pdf.cell(0, 6, "Personalized ROI case study", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(140, 140, 132)
+    pdf.cell(0, 5, f"Generated {datetime.now().strftime('%B %d, %Y')}", new_x="LMARGIN", new_y="NEXT")
+
+    if session_mode == "Work through this with a Fern rep" and st.session_state.lead_name.strip():
+        pdf.ln(1)
         company = f" — {st.session_state.lead_company}" if st.session_state.lead_company.strip() else ""
-        prepared_for = f"Prepared for: {st.session_state.lead_name} ({st.session_state.lead_email}){company}\n"
+        body(f"Prepared for: {st.session_state.lead_name} ({st.session_state.lead_email}){company}")
 
-    outside_counsel_line = (
-        ""
-        if is_law_firm
-        else f"Outside fees savings: {format_currency(roi['outside_fees_savings'])}\n"
-        f"  ({round(roi['charges_outside']):,} charges x {format_currency(roi['effective_outside_counsel_per_charge'])}/charge)\n"
+    # ---- Company profile ----
+    h2("Company profile")
+    kv_row("Buyer type", "Law firm / outside counsel" if is_law_firm else "In-house legal/HR team")
+    kv_row("Industry", st.session_state.industry)
+    kv_row(
+        "Attorneys/staff count" if is_law_firm else "Employee count",
+        f"{st.session_state.employee_count:,}",
     )
-    law_firm_note = (
-        "Note: assumes freed hours convert to billed hours at your stated rate — actual value "
-        "depends on your utilization and realization rates.\n"
-        if is_law_firm
-        else ""
+    kv_row("Annual revenue", format_currency(st.session_state.annual_revenue))
+
+    # ---- Usage estimates ----
+    h2("Usage estimates")
+    kv_row("Charges/matters per year", str(st.session_state.charges_per_year))
+    if is_law_firm:
+        kv_row("Billable rate", format_currency(roi["hourly_rate"]))
+    else:
+        kv_row("Handled in-house", f"{st.session_state.inhouse_pct}% ({round(roi['charges_inhouse']):,} charges)")
+        kv_row(
+            "Outside counsel",
+            f"{100 - st.session_state.inhouse_pct}% ({round(roi['charges_outside']):,} charges)",
+        )
+        kv_row("Outside counsel cost/charge", format_currency(st.session_state.outside_counsel_cost_per_charge))
+        kv_row("Annual salary", format_currency(st.session_state.annual_salary))
+        kv_row("Inhouse effective hourly rate", format_currency(roi["hourly_rate"]))
+
+    # ---- Scenario ----
+    h2("Scenario")
+    kv_row("Current setup", scenario_cfg["label"])
+    body(scenario_cfg["note"])
+
+    # ---- Annual value breakdown (drawn as a bar chart) ----
+    h2("Annual value breakdown")
+    rows = []
+    if is_law_firm:
+        rows.append(("Billable capacity unlocked", roi["inhouse_time_savings"], FERN_GREEN))
+    else:
+        rows.append(("Inhouse time savings", roi["inhouse_time_savings"], FERN_GREEN))
+        rows.append(("Outside fees savings", roi["outside_fees_savings"], FERN_PALE))
+    rows.append(("Fern cost", roi["fern_annual_cost"], FERN_AMBER))
+    rows.append(("Net annual value", roi["net_value_year1_full"], FERN_FOREST))
+
+    max_amount = max(abs(amount) for _, amount, _ in rows) or 1
+    label_width = 52
+    bar_max_width = 90
+    for label, amount, color in rows:
+        y = pdf.get_y()
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(60, 60, 56)
+        pdf.set_xy(pdf.l_margin, y)
+        pdf.cell(label_width, 7, _pdf_safe(label))
+        bar_width = max(2.0, (amount / max_amount) * bar_max_width)
+        pdf.set_fill_color(*_hex_rgb(color))
+        pdf.rect(pdf.l_margin + label_width, y + 1, bar_width, 5, style="F")
+        pdf.set_xy(pdf.l_margin + label_width + bar_max_width + 4, y)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(26, 26, 24)
+        pdf.cell(0, 7, format_currency(amount), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1)
+
+    # ---- Key metrics ----
+    h2("Key metrics")
+    kv_row("Return", f"{roi['money_multiple']:.1f}x")
+    kv_row("Payback period", f"{roi['payback_months']:.1f} months")
+    kv_row("3-year ROI", f"{roi['roi_3_year']:.1f}%")
+    kv_row(
+        f"3-year net value ({'adoption ramp' if use_ramp else 'full value'})",
+        format_currency(roi["three_year_net"]),
     )
-    split_line = (
-        ""
-        if is_law_firm
-        else f"Handled in-house: {st.session_state.inhouse_pct}% ({round(roi['charges_inhouse']):,} charges) — "
-        f"Outside counsel: {100 - st.session_state.inhouse_pct}% ({round(roi['charges_outside']):,} charges)\n"
+
+    # ---- Time saved ----
+    h2("Time saved")
+    kv_row("Total hours freed annually", f"{round(roi['total_hours_saved']):,} hours")
+    kv_row(
+        "Per-charge turnaround",
+        f"~{HOURS_PER_CHARGE_BASE} hrs -> ~{roi['hours_with_fern_per_charge']:.0f} hrs with Fern",
     )
 
-    return f"""FERN — PERSONALIZED ROI CASE STUDY
-Generated: {datetime.now().strftime('%m/%d/%Y')}
-Buyer type: {'Law firm / outside counsel' if is_law_firm else 'In-house legal/HR team'}
-Scenario: {scenario_cfg['label']}
-{prepared_for}
-COMPANY PROFILE
-Industry: {st.session_state.industry}
-{'Attorneys/staff' if is_law_firm else 'Employee'} count: {st.session_state.employee_count:,}
-Annual revenue: {format_currency(st.session_state.annual_revenue)}
+    # ---- Proof point ----
+    h2("Proof point")
+    body(
+        "One customer's legal team went from uploading source documents to an EEOC-ready "
+        "position statement in about two hours total, versus a full day or more manually. "
+        "Fern's approach is shaped by a Customer Advisory Board of F-1000 senior employment "
+        "lawyers."
+    )
 
-USAGE ESTIMATES
-Charges/matters per year: {st.session_state.charges_per_year}
-{split_line}{
-        f"Billable rate: {format_currency(roi['hourly_rate'])}"
-        if is_law_firm
-        else f"Annual salary: {format_currency(st.session_state.annual_salary)} "
-        f"-> inhouse effective hourly rate: {format_currency(roi['hourly_rate'])} "
-        f"(x{LOADED_COST_MULTIPLIER} loaded / {WORK_HOURS_PER_YEAR:,} hrs/yr)"
-    }
-{'' if is_law_firm else f"Outside counsel cost per charge: {format_currency(st.session_state.outside_counsel_cost_per_charge)}"}
+    # ---- Methodology / trust footer ----
+    h2("Methodology")
+    body(
+        "These figures are conservative estimates for internal discussion purposes only, "
+        "developed with input from Fern's Customer Advisory Board. Actual results vary by case "
+        "complexity and adoption speed. This is not a guarantee. Contact sales@fernlabs.com to "
+        "build a business case specific to your caseload.",
+        size=8,
+    )
 
-SCENARIO ADJUSTMENT
-{scenario_cfg['note']}
-Fern savings assumption — hours saved per charge: {roi['effective_hours_saved_per_charge']:.1f} of {HOURS_PER_CHARGE_BASE} hrs baseline
-({' | '.join(f"{cfg['label']}: {cfg['hours_saved_per_charge']} hrs" for cfg in SCENARIOS.values())})
-
-ANNUAL VALUE BREAKDOWN (Year 1, full value)
-------------------------------------
-{value_label}: {format_currency(roi['inhouse_time_savings'])}
-  ({round(roi['total_hours_saved']):,} hours x {format_currency(roi['hourly_rate'])}/hr)
-{outside_counsel_line}Total value: {format_currency(roi['total_value_year1_full'])}
-Fern annual cost: {format_currency(roi['fern_annual_cost'])}
-------------------------------------
-NET ANNUAL VALUE (Year 1): {format_currency(roi['net_value_year1_full'])}
-{law_firm_note}
-KEY METRICS
-------------------------------------
-Return: {roi['money_multiple']:.1f}x — every $1 spent on Fern returns ~${roi['money_multiple']:.1f}
-Payback period: {roi['payback_months']:.1f} months
-3-year net value ({'40/70/100% adoption ramp' if use_ramp else 'full value from Year 1'}): {format_currency(roi['three_year_net'])}
-3-year ROI: {roi['roi_3_year']:.1f}%
-
-TIME SAVED
-------------------------------------
-Total hours freed annually: {round(roi['total_hours_saved']):,} hours
-Per-charge turnaround: ~{HOURS_PER_CHARGE_BASE} hrs -> ~{roi['hours_with_fern_per_charge']:.0f} hrs with Fern
-
-PROOF POINT
-------------------------------------
-One customer's legal team went from uploading source documents to an EEOC-ready
-position statement in about two hours total, versus a full day or more manually.
-Fern's approach is shaped by a Customer Advisory Board of F-1000 senior employment
-lawyers.
-
-METHODOLOGY
-------------------------------------
-Assumptions are conservative estimates for internal discussion purposes only, developed
-with input from Fern's Customer Advisory Board. Actual results vary by case complexity
-and adoption speed. This is not a guarantee.
-
-About Fern
-Fern is a purpose-built AI platform for employment law charges and
-demand letters. It runs an end-to-end workflow — claim analysis, evidence extraction,
-and draft generation — grounded in employment law, with every factual claim tied to a
-specific exhibit so counsel can verify it. Unlimited users, no setup fee. Teams are
-typically fully running within 2 weeks.
-
-Questions? Contact sales@fernlabs.com
-""".strip()
+    return bytes(pdf.output())
 
 
 def build_math_text(is_law_firm, scenario_key, scenario_cfg, roi):
@@ -625,9 +700,9 @@ with right:
 
         downloaded = st.download_button(
             "Get my case study" if session_mode == "Work through this with a Fern rep" else "Download case study",
-            data=build_case_study_text(is_law_firm, session_mode, scenario_cfg, roi, st.session_state.use_ramp),
-            file_name=f"fern-roi-case-study-{st.session_state.industry}-{'lawfirm' if is_law_firm else 'inhouse'}.txt",
-            mime="text/plain",
+            data=build_case_study_pdf(is_law_firm, session_mode, scenario_cfg, roi, st.session_state.use_ramp),
+            file_name=f"fern-roi-case-study-{st.session_state.industry}-{'lawfirm' if is_law_firm else 'inhouse'}.pdf",
+            mime="application/pdf",
             disabled=not can_download,
             icon=":material/download:",
             width="stretch",
