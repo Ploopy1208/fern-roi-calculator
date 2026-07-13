@@ -1,5 +1,6 @@
 import streamlit as st
-from datetime import date
+import requests
+from datetime import datetime
 
 st.set_page_config(
     page_title="Fern Labs ROI calculator",
@@ -231,7 +232,7 @@ def build_case_study_text(is_law_firm, session_mode, scenario_cfg, roi, use_ramp
     )
 
     return f"""FERN LABS — PERSONALIZED ROI CASE STUDY
-Generated: {date.today().strftime('%m/%d/%Y')}
+Generated: {datetime.now().strftime('%m/%d/%Y')}
 Buyer type: {'Law firm / outside counsel' if is_law_firm else 'In-house legal/HR team'}
 Scenario: {scenario_cfg['label']}
 {prepared_for}
@@ -373,6 +374,47 @@ Payback period = Fern annual cost / (Total value / 12)
 3-year ROI = (3-year net value / 3-year Fern cost) x 100
 = ({format_currency(roi['three_year_net'])} / {format_currency(roi['three_year_cost'])}) x 100 \
 = {roi['roi_3_year']:.1f}%""".strip()
+
+
+def notify_slack(is_law_firm, session_mode, scenario_cfg, roi):
+    """Post a no-PII summary of a case-study download to Slack, if configured.
+
+    Deliberately excludes lead_name/lead_email/lead_company — the point is to see
+    what customers are seeing without collecting personal data on the backend.
+    """
+    try:
+        webhook_url = st.secrets.get("SLACK_WEBHOOK_URL", "")
+    except st.errors.StreamlitSecretNotFoundError:
+        return  # no secrets.toml configured at all — nothing to notify
+    if not webhook_url:
+        return
+
+    split_line = (
+        f"\n*Charge split:* {st.session_state.inhouse_pct}% in-house / "
+        f"{100 - st.session_state.inhouse_pct}% outside counsel"
+        if not is_law_firm
+        else ""
+    )
+
+    text = (
+        ":inbox_tray: *Fern ROI case study downloaded*\n"
+        "_No name/email captured — self-serve download._\n\n"
+        f"*Buyer type:* {'Law firm / outside counsel' if is_law_firm else 'In-house legal/HR team'}\n"
+        f"*Session:* {session_mode}\n"
+        f"*Industry:* {st.session_state.industry}\n"
+        f"*Scenario:* {scenario_cfg['label']}\n"
+        f"*Charges/matters per year:* {st.session_state.charges_per_year}"
+        f"{split_line}\n"
+        f"*Net value (Year 1):* {format_currency(roi['net_value_year1_full'])}\n"
+        f"*3-year ROI:* {roi['roi_3_year']:.1f}%\n"
+        f"*Payback period:* {roi['payback_months']:.1f} months\n"
+        f"*Downloaded:* {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    )
+
+    try:
+        requests.post(webhook_url, json={"text": text}, timeout=5)
+    except requests.RequestException:
+        pass  # never let a notification failure block the user's download
 
 
 # ---- Header --------------------------------------------------------------
@@ -596,7 +638,7 @@ with right:
             st.session_state.lead_name.strip() and st.session_state.lead_email.strip()
         )
 
-        st.download_button(
+        downloaded = st.download_button(
             "Get my case study" if session_mode == "Work through this with a Fern rep" else "Download case study",
             data=build_case_study_text(is_law_firm, session_mode, scenario_cfg, roi, st.session_state.use_ramp),
             file_name=f"fern-roi-case-study-{st.session_state.industry}-{'lawfirm' if is_law_firm else 'inhouse'}.txt",
@@ -606,6 +648,8 @@ with right:
             width="stretch",
             type="primary",
         )
+        if downloaded:
+            notify_slack(is_law_firm, session_mode, scenario_cfg, roi)
 
     # ---- Savings breakdown ----
     with st.container(border=True):
