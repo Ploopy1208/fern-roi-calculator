@@ -11,7 +11,12 @@ st.set_page_config(
     layout="wide",
 )
 
-st.logo("assets/fern-logo.svg", link="https://www.fernlabs.ai", size="large")
+st.logo(
+    "assets/fern-logo.svg",
+    link="https://www.fernlabs.ai",
+    size="large",
+    icon_image="assets/fern-icon.svg",
+)
 
 # ---- Scenario configs -------------------------------------------------
 # hours_saved_per_charge is Fern's assumed savings vs. the 20 hr/charge baseline,
