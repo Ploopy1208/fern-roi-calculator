@@ -158,11 +158,19 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
 
     total_value_year1_full = inhouse_time_savings + outside_fees_savings
 
+    # What handling this same caseload costs today (no Fern) vs. after adopting Fern —
+    # the difference nets out to exactly total_value_year1_full - fern_annual_cost.
+    cost_without_fern = (
+        charges_inhouse * HOURS_PER_CHARGE_BASE * hourly_rate
+        + charges_outside * effective_outside_counsel_per_charge
+    )
+
     fern_annual_cost = (
         charges_per_year * fern_cost_per_charge
         if pricing_model == "Per charge"
         else (fern_monthly_fixed or 3000) * 12
     )
+    cost_with_fern = charges_inhouse * hours_with_fern_per_charge * hourly_rate + fern_annual_cost
 
     net_value_year1_full = total_value_year1_full - fern_annual_cost
     payback_months = fern_annual_cost / (total_value_year1_full / 12) if total_value_year1_full > 0 else 0
@@ -195,6 +203,8 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
         "outside_fees_savings": outside_fees_savings,
         "total_value_year1_full": total_value_year1_full,
         "fern_annual_cost": fern_annual_cost,
+        "cost_without_fern": cost_without_fern,
+        "cost_with_fern": cost_with_fern,
         "net_value_year1_full": net_value_year1_full,
         "payback_months": max(0, payback_months),
         "money_multiple": money_multiple,
@@ -723,18 +733,23 @@ with right:
 
     # ---- Savings breakdown ----
     with st.container(border=True):
-        st.subheader("Annual " + ("value" if is_law_firm else "savings") + " breakdown")
+        st.subheader("Annual cost — without Fern vs. with Fern")
 
-        rows = []
-        if is_law_firm:
-            rows.append(("Billable capacity unlocked", roi["inhouse_time_savings"], FERN_GREEN))
-        else:
-            rows.append(("Inhouse time savings", roi["inhouse_time_savings"], FERN_GREEN))
-            rows.append(("Outside fees savings", roi["outside_fees_savings"], FERN_PALE))
-        rows.append(("Fern cost", roi["fern_annual_cost"], FERN_AMBER))
-        rows.append(("Net annual value", roi["net_value_year1_full"], FERN_FOREST))
+        cost_rows = [
+            ("Without Fern", roi["cost_without_fern"], FERN_AMBER),
+            ("With Fern", roi["cost_with_fern"], FERN_GREEN),
+        ]
+        st.altair_chart(breakdown_chart(cost_rows), width="stretch")
 
-        st.altair_chart(breakdown_chart(rows), width="stretch")
+        pct_reduction = (
+            (roi["cost_without_fern"] - roi["cost_with_fern"]) / roi["cost_without_fern"] * 100
+            if roi["cost_without_fern"] > 0
+            else 0
+        )
+        st.caption(
+            f"Fern saves {format_currency(roi['net_value_year1_full'])} per year — "
+            f"a {pct_reduction:.0f}% reduction versus handling this caseload without it."
+        )
 
         if st.session_state.use_ramp:
             st.markdown("**3-year adoption ramp — net value**")
