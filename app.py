@@ -486,6 +486,11 @@ def notify_slack(is_law_firm, session_mode, scenario_cfg, roi):
         pass  # never let a notification failure block the user's download
 
 
+@st.dialog("Request a trial", width="large")
+def request_trial_dialog():
+    st.iframe("https://tally.so/r/0QDaeQ", height=700)
+
+
 # ---- Header --------------------------------------------------------------
 st.title("Fern ROI calculator", text_alignment="center")
 st.caption("See your personalized value on employment charges and demand letters", text_alignment="center")
@@ -757,3 +762,8 @@ with st.container(border=True):
         "actual results vary by case complexity, document volume, and how quickly your team adopts the tool. "
         "Contact **sales@fernlabs.com** to build a business case specific to your caseload."
     )
+
+with st.container(horizontal_alignment="center"):
+    st.space("medium")
+    if st.button("Request a trial", icon=":material/rocket_launch:", type="primary", width="content"):
+        request_trial_dialog()
