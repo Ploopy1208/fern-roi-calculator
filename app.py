@@ -742,7 +742,8 @@ with left:
                 f"(salary × {LOADED_COST_MULTIPLIER} for benefits/overhead ÷ {WORK_HOURS_PER_YEAR:,} hrs/yr)"
             )
 
-        st.markdown("**Fern pricing**")
+    with st.container(border=True):
+        st.subheader("Fern pricing")
         pricing_model = st.segmented_control(
             "Pricing model",
             ["Per charge", "Monthly"],
