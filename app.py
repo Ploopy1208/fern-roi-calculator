@@ -19,20 +19,23 @@ st.logo(
 )
 
 # ---- Scenario configs -------------------------------------------------
-# current_hours_per_charge is today's baseline (before Fern); hours_with_fern_per_charge
-# is Fern's assumed result after adoption — both are per-scenario "Fern savings assumptions".
+# current_hours_per_charge is today's baseline (before Fern) — this is what differs by
+# current tool. hours_with_fern_per_charge is always 2: Fern gets every charge to the same
+# ~2 hr turnaround regardless of what you're using today.
+HOURS_WITH_FERN = 2
+
 SCENARIOS = {
     "no_tool": {
         "label": "A - Not using an AI tool for EEOC charges",
         "current_hours_per_charge": 20,
-        "hours_with_fern_per_charge": 2,
+        "hours_with_fern_per_charge": HOURS_WITH_FERN,
         "outside_counsel_multiplier": 1.0,
         "note": "No existing AI tool for employment disputes — Fern delivers full value.",
     },
     "limited": {
         "label": "B - Limited AI tool use",
         "current_hours_per_charge": 15,
-        "hours_with_fern_per_charge": 3,
+        "hours_with_fern_per_charge": HOURS_WITH_FERN,
         "outside_counsel_multiplier": 0.97,
         "note": "General-purpose or limited AI tools help a little with drafting and research, "
         "but aren't purpose-built for employment law charges — your team still does "
@@ -41,7 +44,7 @@ SCENARIOS = {
     "high": {
         "label": "C - High AI tool use / custom legal tech product",
         "current_hours_per_charge": 5,
-        "hours_with_fern_per_charge": 2,
+        "hours_with_fern_per_charge": HOURS_WITH_FERN,
         "outside_counsel_multiplier": 0.9,
         "note": "Sophisticated or custom-built tools already save meaningful time, but "
         "employment-law-specific grounding, citation-checked drafting, and workflow "
@@ -112,10 +115,13 @@ def format_currency(num):
     return f"${round(num):,}"
 
 
-def breakdown_chart(rows):
-    """Horizontal bar chart for a small set of named dollar amounts.
+def breakdown_chart(rows, value_format="$,.0f", value_prefix="$", value_suffix=""):
+    """Horizontal bar chart for a small set of named amounts.
 
     rows: list of (label, amount, color) tuples, in top-to-bottom display order.
+    value_format: Vega-Lite axis number format (no currency/unit symbols).
+    value_prefix / value_suffix: text wrapped around the formatted number in bar-end
+    labels and the axis (e.g. prefix="$" for dollars, suffix=" hrs" for hours).
     """
     df = pd.DataFrame(rows, columns=["Category", "Amount", "Color"])
     order = df["Category"].tolist()
@@ -125,23 +131,20 @@ def breakdown_chart(rows):
         alt.Chart(df)
         .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, height=26)
         .encode(
-            x=alt.X("Amount:Q", title=None, axis=alt.Axis(format="$,.0f", grid=False)),
+            x=alt.X("Amount:Q", title=None, axis=alt.Axis(format=value_format, grid=False)),
             y=alt.Y("Category:N", title=None, sort=order, axis=alt.Axis(labelLimit=160)),
             color=alt.Color("Category:N", scale=alt.Scale(domain=order, range=colors), legend=None),
             tooltip=[
                 alt.Tooltip("Category:N", title="Category"),
-                alt.Tooltip("Amount:Q", title="Amount", format="$,.0f"),
+                alt.Tooltip("Amount:Q", title="Amount", format=value_format),
             ],
         )
     )
+    df["Label"] = df["Amount"].apply(lambda a: f"{value_prefix}{a:,.0f}{value_suffix}")
     labels = (
         alt.Chart(df)
         .mark_text(align="left", dx=6, color="#1a1a18")
-        .encode(
-            x=alt.X("Amount:Q"),
-            y=alt.Y("Category:N", sort=order),
-            text=alt.Text("Amount:Q", format="$,.0f"),
-        )
+        .encode(x=alt.X("Amount:Q"), y=alt.Y("Category:N", sort=order), text=alt.Text("Label:N"))
     )
     return (bars + labels).properties(height=len(df) * 42 + 20)
 
@@ -191,7 +194,9 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
     outside_cost_with_fern = charges_outside_fern * effective_outside_counsel_per_charge
     outside_fees_savings = outside_cost_today - outside_cost_with_fern
 
-    total_hours_saved = charges_inhouse_today * current_hours_per_charge - charges_inhouse_fern * hours_with_fern_per_charge
+    hours_inhouse_today = charges_inhouse_today * current_hours_per_charge
+    hours_inhouse_with_fern = charges_inhouse_fern * hours_with_fern_per_charge
+    total_hours_saved = hours_inhouse_today - hours_inhouse_with_fern
 
     total_value_year1_full = inhouse_time_savings + outside_fees_savings
 
@@ -239,6 +244,8 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
         "inhouse_labor_cost_with_fern": inhouse_labor_cost_with_fern,
         "outside_cost_today": outside_cost_today,
         "outside_cost_with_fern": outside_cost_with_fern,
+        "hours_inhouse_today": hours_inhouse_today,
+        "hours_inhouse_with_fern": hours_inhouse_with_fern,
         "total_hours_saved": total_hours_saved,
         "inhouse_time_savings": inhouse_time_savings,
         "effective_outside_counsel_per_charge": effective_outside_counsel_per_charge,
@@ -760,17 +767,28 @@ roi = calculate_roi(is_law_firm, scenario_cfg, pricing_model or "Per charge", st
 # ---- Results section -----------------------------------------------------
 with right:
     with st.container(border=True):
-        st.subheader("Your ROI results")
+        st.subheader("Your Business Impact Results")
 
         st.metric(
             "Time saved annually",
             f"{round(roi['total_hours_saved']):,} hours",
             border=True,
         )
+        scenario_short_label = scenario_cfg["label"].split(" - ", 1)[-1]
         st.caption(
             f"Each {'matter' if is_law_firm else 'in-house charge'} drops from "
             f"~{roi['current_hours_per_charge']} hrs to ~{roi['hours_with_fern_per_charge']:.0f} hrs with Fern "
-            f"({scenario_cfg['label']})"
+            f"(current: {scenario_short_label})"
+        )
+
+        st.caption("Time in-house annually — without Fern vs. with Fern")
+        hours_rows = [
+            ("Without Fern", roi["hours_inhouse_today"], FERN_AMBER),
+            ("With Fern", roi["hours_inhouse_with_fern"], FERN_GREEN),
+        ]
+        st.altair_chart(
+            breakdown_chart(hours_rows, value_format=",.0f", value_prefix="", value_suffix=" hrs"),
+            width="stretch",
         )
 
         st.metric(
