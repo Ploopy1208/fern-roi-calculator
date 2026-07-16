@@ -72,7 +72,8 @@ DEFAULTS = {
     "industry": "Technology",
     "employee_count": "50",
     "charges_per_year": 120,
-    "inhouse_pct": 75,
+    "inhouse_pct_today": 75,
+    "inhouse_pct_fern": 100,
     "outside_counsel_cost_per_charge": 15000,
     "annual_salary": 192_000,
     "hourly_labor_cost": 150,
@@ -150,7 +151,8 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
     outside_counsel_cost_per_charge = st.session_state.outside_counsel_cost_per_charge
     fern_cost_per_charge = st.session_state.fern_cost_per_charge
     fern_monthly_fixed = st.session_state.fern_monthly_fixed
-    inhouse_pct = st.session_state.inhouse_pct / 100
+    inhouse_pct_today = st.session_state.inhouse_pct_today / 100
+    inhouse_pct_fern = st.session_state.inhouse_pct_fern / 100
 
     # The user's own real-world estimate drives the math — the scenario's hours are only
     # a starting suggestion (auto-filled when they change their answer, but editable).
@@ -164,37 +166,46 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
         # there's no split, and hours freed are billable capacity unlocked, not cost avoided.
         # Billable rate is a direct client-billing rate, not derived from a salary.
         hourly_rate = st.session_state.hourly_labor_cost
-        charges_inhouse = charges_per_year
-        charges_outside = 0
-        total_hours_saved = charges_inhouse * effective_hours_saved_per_charge
-        inhouse_time_savings = total_hours_saved * hourly_rate
-        outside_fees_savings = 0
+        charges_inhouse_today = charges_per_year
+        charges_outside_today = 0
+        charges_inhouse_fern = charges_per_year
+        charges_outside_fern = 0
     else:
-        # In-house: charges split between work handled internally (time saved, valued at
-        # the fully-loaded hourly rate derived from salary) and work sent to outside counsel
-        # (fee avoided entirely).
+        # In-house: because Fern makes in-house work faster, a customer may plan to bring
+        # more charges in-house than they do today — so "today's split" and "the split once
+        # they have Fern" are tracked as two separate, independently editable assumptions.
         hourly_rate = inhouse_hourly_rate()
-        charges_inhouse = charges_per_year * inhouse_pct
-        charges_outside = charges_per_year - charges_inhouse
-        total_hours_saved = charges_inhouse * effective_hours_saved_per_charge
-        inhouse_time_savings = total_hours_saved * hourly_rate
-        outside_fees_savings = charges_outside * effective_outside_counsel_per_charge
+        charges_inhouse_today = charges_per_year * inhouse_pct_today
+        charges_outside_today = charges_per_year - charges_inhouse_today
+        charges_inhouse_fern = charges_per_year * inhouse_pct_fern
+        charges_outside_fern = charges_per_year - charges_inhouse_fern
+
+    # Charges kept in-house get faster (time savings); charges that move from outside
+    # counsel to in-house avoid that fee entirely (fees savings) — both compared at the
+    # SAME charge volume, just re-split between today's mix and the with-Fern mix.
+    inhouse_labor_cost_today = charges_inhouse_today * current_hours_per_charge * hourly_rate
+    inhouse_labor_cost_with_fern = charges_inhouse_fern * hours_with_fern_per_charge * hourly_rate
+    inhouse_time_savings = inhouse_labor_cost_today - inhouse_labor_cost_with_fern
+
+    outside_cost_today = charges_outside_today * effective_outside_counsel_per_charge
+    outside_cost_with_fern = charges_outside_fern * effective_outside_counsel_per_charge
+    outside_fees_savings = outside_cost_today - outside_cost_with_fern
+
+    total_hours_saved = charges_inhouse_today * current_hours_per_charge - charges_inhouse_fern * hours_with_fern_per_charge
 
     total_value_year1_full = inhouse_time_savings + outside_fees_savings
 
-    # What handling this same caseload costs today (no Fern) vs. after adopting Fern —
-    # the difference nets out to exactly total_value_year1_full - fern_annual_cost.
-    cost_without_fern = (
-        charges_inhouse * current_hours_per_charge * hourly_rate
-        + charges_outside * effective_outside_counsel_per_charge
-    )
+    # What handling this same caseload costs today (no Fern, today's in-house/outside mix)
+    # vs. after adopting Fern (the with-Fern mix) — nets out to exactly
+    # total_value_year1_full - fern_annual_cost.
+    cost_without_fern = inhouse_labor_cost_today + outside_cost_today
 
     fern_annual_cost = (
         charges_per_year * fern_cost_per_charge
         if pricing_model == "Per charge"
         else (fern_monthly_fixed or 3000) * 12
     )
-    cost_with_fern = charges_inhouse * hours_with_fern_per_charge * hourly_rate + fern_annual_cost
+    cost_with_fern = inhouse_labor_cost_with_fern + outside_cost_with_fern + fern_annual_cost
 
     net_value_year1_full = total_value_year1_full - fern_annual_cost
     payback_months = fern_annual_cost / (total_value_year1_full / 12) if total_value_year1_full > 0 else 0
@@ -220,8 +231,14 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
         "current_hours_per_charge": current_hours_per_charge,
         "effective_hours_saved_per_charge": effective_hours_saved_per_charge,
         "hours_with_fern_per_charge": hours_with_fern_per_charge,
-        "charges_inhouse": charges_inhouse,
-        "charges_outside": charges_outside,
+        "charges_inhouse_today": charges_inhouse_today,
+        "charges_outside_today": charges_outside_today,
+        "charges_inhouse_fern": charges_inhouse_fern,
+        "charges_outside_fern": charges_outside_fern,
+        "inhouse_labor_cost_today": inhouse_labor_cost_today,
+        "inhouse_labor_cost_with_fern": inhouse_labor_cost_with_fern,
+        "outside_cost_today": outside_cost_today,
+        "outside_cost_with_fern": outside_cost_with_fern,
         "total_hours_saved": total_hours_saved,
         "inhouse_time_savings": inhouse_time_savings,
         "effective_outside_counsel_per_charge": effective_outside_counsel_per_charge,
@@ -327,10 +344,13 @@ def build_case_study_pdf(is_law_firm, session_mode, scenario_cfg, roi, use_ramp)
     if is_law_firm:
         kv_row("Billable rate", format_currency(roi["hourly_rate"]))
     else:
-        kv_row("Handled in-house", f"{st.session_state.inhouse_pct}% ({round(roi['charges_inhouse']):,} charges)")
         kv_row(
-            "Outside counsel",
-            f"{100 - st.session_state.inhouse_pct}% ({round(roi['charges_outside']):,} charges)",
+            "Handled in-house today",
+            f"{st.session_state.inhouse_pct_today}% ({round(roi['charges_inhouse_today']):,} charges)",
+        )
+        kv_row(
+            "Handled in-house with Fern",
+            f"{st.session_state.inhouse_pct_fern}% ({round(roi['charges_inhouse_fern']):,} charges)",
         )
         kv_row("Outside counsel cost/charge", format_currency(st.session_state.outside_counsel_cost_per_charge))
         kv_row("Annual salary", format_currency(st.session_state.annual_salary))
@@ -431,41 +451,43 @@ def build_math_text(is_law_firm, scenario_key, scenario_cfg, roi):
 """
     )
 
-    hours_line = (
-        f"Hours saved = matters/year x hours saved per charge\n"
-        f"= {round(roi['charges_inhouse']):,} x {roi['effective_hours_saved_per_charge']:.1f} hrs "
-        f"= {round(roi['total_hours_saved']):,} hrs"
-        if is_law_firm
-        else f"Hours saved = in-house charges x hours saved per charge\n"
-        f"= {round(roi['charges_inhouse']):,} x {roi['effective_hours_saved_per_charge']:.1f} hrs "
-        f"= {round(roi['total_hours_saved']):,} hrs"
-    )
+    # A law firm has no in-house/outside split (charges_inhouse_today == charges_inhouse_fern
+    # == all charges), so the split lines collapse to a single "hours saved" line for them.
+    if is_law_firm:
+        today_block = (
+            f"Cost today = matters/year x hours spent per charge x billable rate\n"
+            f"= {round(roi['charges_inhouse_today']):,} x {roi['current_hours_per_charge']} hrs x "
+            f"{format_currency(roi['hourly_rate'])} = {format_currency(roi['cost_without_fern'])}"
+        )
+        fern_block = (
+            f"Cost with Fern = matters/year x hours spent per charge with Fern x billable rate + Fern annual cost\n"
+            f"= {round(roi['charges_inhouse_fern']):,} x {roi['hours_with_fern_per_charge']:.0f} hrs x "
+            f"{format_currency(roi['hourly_rate'])} + {format_currency(roi['fern_annual_cost'])} "
+            f"= {format_currency(roi['cost_with_fern'])}"
+        )
+    else:
+        today_block = f"""Cost today = in-house cost + outside counsel cost
+  In-house: {round(roi['charges_inhouse_today']):,} charges x {roi['current_hours_per_charge']} hrs x \
+{format_currency(roi['hourly_rate'])} = {format_currency(roi['inhouse_labor_cost_today'])}
+  Outside: {round(roi['charges_outside_today']):,} charges x {format_currency(roi['effective_outside_counsel_per_charge'])} \
+= {format_currency(roi['outside_cost_today'])}
+= {format_currency(roi['inhouse_labor_cost_today'])} + {format_currency(roi['outside_cost_today'])} \
+= {format_currency(roi['cost_without_fern'])}"""
 
-    inhouse_line = (
-        f"{'Billable capacity unlocked' if is_law_firm else 'Inhouse time savings'} = hours saved x "
-        f"{'billable rate' if is_law_firm else 'inhouse effective hourly rate'}\n"
-        f"= {round(roi['total_hours_saved']):,} x {format_currency(roi['hourly_rate'])} "
-        f"= {format_currency(roi['inhouse_time_savings'])}"
-    )
+        fern_block = f"""Cost with Fern = in-house cost + outside counsel cost + Fern annual cost
+  In-house: {round(roi['charges_inhouse_fern']):,} charges x {roi['hours_with_fern_per_charge']:.0f} hrs x \
+{format_currency(roi['hourly_rate'])} = {format_currency(roi['inhouse_labor_cost_with_fern'])}
+  Outside: {round(roi['charges_outside_fern']):,} charges x {format_currency(roi['effective_outside_counsel_per_charge'])} \
+= {format_currency(roi['outside_cost_with_fern'])}
+= {format_currency(roi['inhouse_labor_cost_with_fern'])} + {format_currency(roi['outside_cost_with_fern'])} + \
+{format_currency(roi['fern_annual_cost'])} = {format_currency(roi['cost_with_fern'])}"""
 
-    outside_block = (
+    split_note = (
         ""
         if is_law_firm
-        else f"""
-
-Outside fees savings = outside-counsel charges x cost per charge
-= {round(roi['charges_outside']):,} x {format_currency(roi['effective_outside_counsel_per_charge'])} \
-= {format_currency(roi['outside_fees_savings'])}
-
-Total value = Inhouse time savings + Outside fees savings
-= {format_currency(roi['inhouse_time_savings'])} + {format_currency(roi['outside_fees_savings'])} \
-= {format_currency(roi['total_value_year1_full'])}"""
-    )
-
-    total_value_line = (
-        f"\n\nTotal value = Billable capacity unlocked\n= {format_currency(roi['total_value_year1_full'])}"
-        if is_law_firm
-        else ""
+        else f"\nNote: the in-house share can differ before/after Fern — Fern makes in-house work "
+        f"faster, so you may plan to bring more charges in-house than you do today "
+        f"({st.session_state.inhouse_pct_today}% today -> {st.session_state.inhouse_pct_fern}% with Fern).\n"
     )
 
     return f"""TYPICAL TIME SPENT BY SETUP (starting suggestions, by current tool)
@@ -473,13 +495,13 @@ Total value = Inhouse time savings + Outside fees savings
 
 Your entered time spent per charge: {roi['current_hours_per_charge']} hrs -> \
 {roi['hours_with_fern_per_charge']:.0f} hrs with Fern (this is what the math below uses)
+{split_note}
+{rate_line}{today_block}
 
-{rate_line}{hours_line}
+{fern_block}
 
-{inhouse_line}{outside_block}{total_value_line}
-
-Net value = Total value - Fern annual cost
-= {format_currency(roi['total_value_year1_full'])} - {format_currency(roi['fern_annual_cost'])} \
+Net value = Cost today - Cost with Fern
+= {format_currency(roi['cost_without_fern'])} - {format_currency(roi['cost_with_fern'])} \
 = {format_currency(roi['net_value_year1_full'])}
 
 Payback period = Fern annual cost / (Total value / 12)
@@ -505,8 +527,8 @@ def notify_slack(is_law_firm, session_mode, scenario_cfg, roi):
         return
 
     split_line = (
-        f"\n*Charge split:* {st.session_state.inhouse_pct}% in-house / "
-        f"{100 - st.session_state.inhouse_pct}% outside counsel"
+        f"\n*Charge split:* {st.session_state.inhouse_pct_today}% in-house today -> "
+        f"{st.session_state.inhouse_pct_fern}% in-house with Fern"
         if not is_law_firm
         else ""
     )
@@ -645,22 +667,39 @@ with left:
 
         if not is_law_firm:
             st.slider(
-                "% of charges handled in-house",
+                "% of charges handled in-house today",
                 min_value=0,
                 max_value=100,
                 step=5,
-                key="inhouse_pct",
+                key="inhouse_pct_today",
                 format="%d%%",
-                help="What share of your charges your own team handles, versus sending to "
-                "outside counsel. In-house charges save time (valued at your effective hourly "
-                "rate below); charges sent to outside counsel instead save that firm's fee "
-                "entirely, since Fern lets you bring the work in-house.",
+                help="What share of your charges your own team handles today, versus sending "
+                "to outside counsel. This sets the 'without Fern' baseline cost.",
             )
-            charges_inhouse_n = round(st.session_state.charges_per_year * st.session_state.inhouse_pct / 100)
-            charges_outside_n = st.session_state.charges_per_year - charges_inhouse_n
+            charges_inhouse_today_n = round(st.session_state.charges_per_year * st.session_state.inhouse_pct_today / 100)
+            charges_outside_today_n = st.session_state.charges_per_year - charges_inhouse_today_n
             st.caption(
-                f"{st.session_state.inhouse_pct}% in-house ({charges_inhouse_n:,} charges) · "
-                f"{100 - st.session_state.inhouse_pct}% outside counsel ({charges_outside_n:,} charges)"
+                f"Today: {st.session_state.inhouse_pct_today}% in-house ({charges_inhouse_today_n:,} charges) · "
+                f"{100 - st.session_state.inhouse_pct_today}% outside counsel ({charges_outside_today_n:,} charges)"
+            )
+
+            st.slider(
+                "% of charges you'd handle in-house with Fern",
+                min_value=0,
+                max_value=100,
+                step=5,
+                key="inhouse_pct_fern",
+                format="%d%%",
+                help="Because Fern makes in-house work much faster, most teams can bring "
+                "nearly everything in-house instead of sending it to outside counsel — "
+                "defaults to 100%. Lower it if you'd still route some complex or "
+                "high-risk charges to outside counsel even with Fern.",
+            )
+            charges_inhouse_fern_n = round(st.session_state.charges_per_year * st.session_state.inhouse_pct_fern / 100)
+            charges_outside_fern_n = st.session_state.charges_per_year - charges_inhouse_fern_n
+            st.caption(
+                f"With Fern: {st.session_state.inhouse_pct_fern}% in-house ({charges_inhouse_fern_n:,} charges) · "
+                f"{100 - st.session_state.inhouse_pct_fern}% outside counsel ({charges_outside_fern_n:,} charges)"
             )
 
             st.slider(
