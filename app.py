@@ -19,26 +19,36 @@ st.logo(
 )
 
 # ---- Scenario configs -------------------------------------------------
-# hours_saved_per_charge is Fern's assumed savings vs. the 20 hr/charge baseline,
-# for each starting-point tool (this is the "Fern savings assumption" per scenario).
+# current_hours_per_charge is today's baseline (before Fern); hours_with_fern_per_charge
+# is Fern's assumed result after adoption — both are per-scenario "Fern savings assumptions".
 SCENARIOS = {
-    "baseline": {
-        "label": "Starting from scratch",
-        "hours_saved_per_charge": 18,
+    "no_tool": {
+        "label": "A - Not using an AI tool for EEOC charges",
+        "current_hours_per_charge": 20,
+        "hours_with_fern_per_charge": 2,
         "outside_counsel_multiplier": 1.0,
         "note": "No existing AI tool for employment disputes — Fern delivers full value.",
     },
-    "existing": {
-        "label": "Already have an in-house legal tool",
-        "hours_saved_per_charge": 15,
+    "limited": {
+        "label": "B - Limited AI tool use",
+        "current_hours_per_charge": 15,
+        "hours_with_fern_per_charge": 3,
         "outside_counsel_multiplier": 0.97,
-        "note": "General-purpose or in-house tools help a little with drafting and research, "
+        "note": "General-purpose or limited AI tools help a little with drafting and research, "
         "but aren't purpose-built for employment law charges — your team still does "
         "significant manual review, and reliance on outside counsel stays about the same.",
     },
+    "high": {
+        "label": "C - High AI tool use / custom legal tech product",
+        "current_hours_per_charge": 5,
+        "hours_with_fern_per_charge": 2,
+        "outside_counsel_multiplier": 0.9,
+        "note": "Sophisticated or custom-built tools already save meaningful time, but "
+        "employment-law-specific grounding, citation-checked drafting, and workflow "
+        "automation still add incremental value on top.",
+    },
 }
 
-HOURS_PER_CHARGE_BASE = 20
 RAMP_PCT = [0.4, 0.7, 1.0]
 
 # ---- Inhouse fully-loaded hourly rate: (annual salary x loaded-cost multiplier) / hrs per year
@@ -55,18 +65,18 @@ FERN_AMBER = "#c97b2a"  # distinct hue — cost, never confused with value
 DEFAULTS = {
     "buyer_type": "In-house legal/HR team",
     "session_mode": "Self-serve preview",
-    "scenario_label": SCENARIOS["baseline"]["label"],
+    "scenario_label": next(iter(SCENARIOS.values()))["label"],
     "use_ramp": False,
     "pricing_model": "Per charge",
     "industry": "Technology",
-    "employee_count": 50,
-    "annual_revenue": 5_000_000,
+    "employee_count": "50",
     "charges_per_year": 120,
     "inhouse_pct": 75,
     "outside_counsel_cost_per_charge": 15000,
     "annual_salary": 192_000,
     "hourly_labor_cost": 150,
     "fern_cost_per_charge": 900,
+    "setup_comments": "",
     "fern_monthly_fixed": 3000,
     "lead_name": "",
     "lead_email": "",
@@ -131,8 +141,9 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
     fern_monthly_fixed = st.session_state.fern_monthly_fixed
     inhouse_pct = st.session_state.inhouse_pct / 100
 
-    effective_hours_saved_per_charge = scenario_cfg["hours_saved_per_charge"]
-    hours_with_fern_per_charge = HOURS_PER_CHARGE_BASE - effective_hours_saved_per_charge
+    current_hours_per_charge = scenario_cfg["current_hours_per_charge"]
+    hours_with_fern_per_charge = scenario_cfg["hours_with_fern_per_charge"]
+    effective_hours_saved_per_charge = current_hours_per_charge - hours_with_fern_per_charge
     effective_outside_counsel_per_charge = outside_counsel_cost_per_charge * scenario_cfg["outside_counsel_multiplier"]
 
     if is_law_firm:
@@ -161,7 +172,7 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
     # What handling this same caseload costs today (no Fern) vs. after adopting Fern —
     # the difference nets out to exactly total_value_year1_full - fern_annual_cost.
     cost_without_fern = (
-        charges_inhouse * HOURS_PER_CHARGE_BASE * hourly_rate
+        charges_inhouse * current_hours_per_charge * hourly_rate
         + charges_outside * effective_outside_counsel_per_charge
     )
 
@@ -193,6 +204,7 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
 
     return {
         "hourly_rate": hourly_rate,
+        "current_hours_per_charge": current_hours_per_charge,
         "effective_hours_saved_per_charge": effective_hours_saved_per_charge,
         "hours_with_fern_per_charge": hours_with_fern_per_charge,
         "charges_inhouse": charges_inhouse,
@@ -242,8 +254,8 @@ def _pdf_safe(text):
 
 def build_case_study_pdf(is_law_firm, session_mode, scenario_cfg, roi, use_ramp):
     pdf = FPDF(unit="mm", format="Letter")
-    pdf.set_auto_page_break(auto=True, margin=14)
-    pdf.set_margins(18, 14, 18)
+    pdf.set_auto_page_break(auto=True, margin=10)
+    pdf.set_margins(18, 10, 18)
     pdf.add_page()
 
     def h1(text):
@@ -252,26 +264,26 @@ def build_case_study_pdf(is_law_firm, session_mode, scenario_cfg, roi, use_ramp)
         pdf.cell(0, 9, _pdf_safe(text), new_x="LMARGIN", new_y="NEXT")
 
     def h2(text):
-        pdf.ln(2)
+        pdf.ln(1.2)
         pdf.set_font("Helvetica", "B", 11)
         pdf.set_text_color(*_hex_rgb(FERN_GREEN))
-        pdf.cell(0, 6, _pdf_safe(text.upper()), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 5.5, _pdf_safe(text.upper()), new_x="LMARGIN", new_y="NEXT")
         pdf.set_draw_color(*_hex_rgb(FERN_PALE))
         pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
-        pdf.ln(1.5)
+        pdf.ln(1)
 
     def body(text, size=9):
         pdf.set_font("Helvetica", "", size)
         pdf.set_text_color(60, 60, 56)
-        pdf.multi_cell(0, 4.5, _pdf_safe(text))
+        pdf.multi_cell(0, 4.2, _pdf_safe(text))
 
     def kv_row(label, value):
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(90, 90, 86)
-        pdf.cell(85, 5.5, _pdf_safe(label))
+        pdf.cell(85, 5.2, _pdf_safe(label))
         pdf.set_font("Helvetica", "B", 10)
         pdf.set_text_color(*_hex_rgb(FERN_FOREST))
-        pdf.cell(0, 5.5, _pdf_safe(value), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 5.2, _pdf_safe(value), new_x="LMARGIN", new_y="NEXT")
 
     # ---- Header ----
     h1("Fern")
@@ -292,10 +304,9 @@ def build_case_study_pdf(is_law_firm, session_mode, scenario_cfg, roi, use_ramp)
     kv_row("Buyer type", "Law firm / outside counsel" if is_law_firm else "In-house legal/HR team")
     kv_row("Industry", st.session_state.industry)
     kv_row(
-        "Attorneys/staff count" if is_law_firm else "Employee count",
-        f"{st.session_state.employee_count:,}",
+        "Attorneys/staff count" if is_law_firm else "Employee headcount",
+        str(st.session_state.employee_count),
     )
-    kv_row("Annual revenue", format_currency(st.session_state.annual_revenue))
 
     # ---- Usage estimates ----
     h2("Usage estimates")
@@ -315,7 +326,11 @@ def build_case_study_pdf(is_law_firm, session_mode, scenario_cfg, roi, use_ramp)
     # ---- Scenario ----
     h2("Scenario")
     kv_row("Current setup", scenario_cfg["label"])
+    kv_row("Current time spent per charge", f"{roi['current_hours_per_charge']} hrs")
     body(scenario_cfg["note"])
+    if st.session_state.setup_comments.strip():
+        pdf.ln(1)
+        body(f"Comments: {st.session_state.setup_comments.strip()}")
 
     # ---- Annual value breakdown (drawn as a bar chart) ----
     h2("Annual value breakdown")
@@ -361,7 +376,7 @@ def build_case_study_pdf(is_law_firm, session_mode, scenario_cfg, roi, use_ramp)
     kv_row("Total hours freed annually", f"{round(roi['total_hours_saved']):,} hours")
     kv_row(
         "Per-charge turnaround",
-        f"~{HOURS_PER_CHARGE_BASE} hrs -> ~{roi['hours_with_fern_per_charge']:.0f} hrs with Fern",
+        f"~{roi['current_hours_per_charge']} hrs -> ~{roi['hours_with_fern_per_charge']:.0f} hrs with Fern",
     )
 
     # ---- Proof point ----
@@ -388,8 +403,8 @@ def build_case_study_pdf(is_law_firm, session_mode, scenario_cfg, roi, use_ramp)
 
 def build_math_text(is_law_firm, scenario_key, scenario_cfg, roi):
     assumptions = "\n".join(
-        f"  {'-> ' if key == scenario_key else '   '}{cfg['label']}: {cfg['hours_saved_per_charge']} hrs saved "
-        f"(of {HOURS_PER_CHARGE_BASE} hr baseline)"
+        f"  {'-> ' if key == scenario_key else '   '}{cfg['label']}: "
+        f"{cfg['current_hours_per_charge']} hrs -> {cfg['hours_with_fern_per_charge']} hrs with Fern"
         for key, cfg in SCENARIOS.items()
     )
 
@@ -531,16 +546,32 @@ scenario_labels = [SCENARIOS[k]["label"] for k in scenario_keys]
 
 with st.container(border=True):
     st.subheader("Which best describes your current setup?")
-    scenario_label = st.segmented_control(
+    scenario_label = st.radio(
         "Current setup",
         scenario_labels,
         key="scenario_label",
         label_visibility="collapsed",
-        width="stretch",
     )
-    scenario_key = scenario_keys[scenario_labels.index(scenario_label)] if scenario_label else "baseline"
+    scenario_key = scenario_keys[scenario_labels.index(scenario_label)] if scenario_label else scenario_keys[0]
     scenario_cfg = SCENARIOS[scenario_key]
     st.caption(f":material/info: {scenario_cfg['note']}")
+
+    st.markdown("**Current estimate of time spent per charge**")
+    hours_options = [f"{cfg['current_hours_per_charge']} hrs" for cfg in SCENARIOS.values()]
+    st.radio(
+        "Current time spent per charge",
+        hours_options,
+        index=scenario_keys.index(scenario_key),
+        disabled=True,
+        label_visibility="collapsed",
+    )
+    st.caption("Auto-set based on your answer above — changing your current setup updates this.")
+
+    st.text_area(
+        "Comments",
+        key="setup_comments",
+        placeholder="Include any comments about your current tool usage or productivity",
+    )
 
 # ---- Session mode ----------------------------------------------------------
 with st.container(border=True):
@@ -572,14 +603,10 @@ with left:
             key="industry",
         )
 
-        st.number_input(
-            "Attorneys/staff count" if is_law_firm else "Employee count",
-            min_value=0,
-            step=1,
+        st.text_input(
+            "Attorneys/staff count" if is_law_firm else "Employee headcount",
             key="employee_count",
         )
-
-        st.number_input("Annual revenue", min_value=0, step=1000, key="annual_revenue")
 
         st.markdown("**" + ("Practice volume" if is_law_firm else "Legal operations") + "**")
 
@@ -681,8 +708,9 @@ with right:
             border=True,
         )
         st.caption(
-            f"Each {'matter' if is_law_firm else 'in-house charge'} drops from ~{HOURS_PER_CHARGE_BASE} hrs to "
-            f"~{roi['hours_with_fern_per_charge']:.0f} hrs with Fern ({scenario_cfg['label']})"
+            f"Each {'matter' if is_law_firm else 'in-house charge'} drops from "
+            f"~{roi['current_hours_per_charge']} hrs to ~{roi['hours_with_fern_per_charge']:.0f} hrs with Fern "
+            f"({scenario_cfg['label']})"
         )
 
         st.metric(
