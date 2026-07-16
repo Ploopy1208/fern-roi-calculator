@@ -66,6 +66,7 @@ DEFAULTS = {
     "buyer_type": "In-house legal/HR team",
     "session_mode": "Self-serve preview",
     "scenario_label": next(iter(SCENARIOS.values()))["label"],
+    "current_hours_per_charge": next(iter(SCENARIOS.values()))["current_hours_per_charge"],
     "use_ramp": False,
     "pricing_model": "Per charge",
     "industry": "Technology",
@@ -94,6 +95,16 @@ def inhouse_hourly_rate():
 def reset_inputs():
     for key, value in DEFAULTS.items():
         st.session_state[key] = value
+
+
+def sync_hours_to_scenario():
+    """Re-fill the time-spent-per-charge field with a typical suggestion whenever the
+    setup answer changes. The field stays fully editable afterward — this only sets
+    the starting point."""
+    for cfg in SCENARIOS.values():
+        if cfg["label"] == st.session_state.scenario_label:
+            st.session_state.current_hours_per_charge = cfg["current_hours_per_charge"]
+            return
 
 
 def format_currency(num):
@@ -141,8 +152,10 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
     fern_monthly_fixed = st.session_state.fern_monthly_fixed
     inhouse_pct = st.session_state.inhouse_pct / 100
 
-    current_hours_per_charge = scenario_cfg["current_hours_per_charge"]
-    hours_with_fern_per_charge = scenario_cfg["hours_with_fern_per_charge"]
+    # The user's own real-world estimate drives the math — the scenario's hours are only
+    # a starting suggestion (auto-filled when they change their answer, but editable).
+    current_hours_per_charge = st.session_state.current_hours_per_charge
+    hours_with_fern_per_charge = min(scenario_cfg["hours_with_fern_per_charge"], current_hours_per_charge)
     effective_hours_saved_per_charge = current_hours_per_charge - hours_with_fern_per_charge
     effective_outside_counsel_per_charge = outside_counsel_cost_per_charge * scenario_cfg["outside_counsel_multiplier"]
 
@@ -455,8 +468,11 @@ Total value = Inhouse time savings + Outside fees savings
         else ""
     )
 
-    return f"""FERN SAVINGS ASSUMPTIONS (hours saved per charge, by current tool)
+    return f"""TYPICAL TIME SPENT BY SETUP (starting suggestions, by current tool)
 {assumptions}
+
+Your entered time spent per charge: {roi['current_hours_per_charge']} hrs -> \
+{roi['hours_with_fern_per_charge']:.0f} hrs with Fern (this is what the math below uses)
 
 {rate_line}{hours_line}
 
@@ -550,22 +566,26 @@ with st.container(border=True):
         "Current setup",
         scenario_labels,
         key="scenario_label",
+        on_change=sync_hours_to_scenario,
         label_visibility="collapsed",
     )
     scenario_key = scenario_keys[scenario_labels.index(scenario_label)] if scenario_label else scenario_keys[0]
     scenario_cfg = SCENARIOS[scenario_key]
     st.caption(f":material/info: {scenario_cfg['note']}")
 
-    st.markdown("**Current estimate of time spent per charge**")
-    hours_options = [f"{cfg['current_hours_per_charge']} hrs" for cfg in SCENARIOS.values()]
-    st.radio(
-        "Current time spent per charge",
-        hours_options,
-        index=scenario_keys.index(scenario_key),
-        disabled=True,
-        label_visibility="collapsed",
+    st.number_input(
+        "Current estimate of time spent per charge (hrs)",
+        min_value=0,
+        step=1,
+        key="current_hours_per_charge",
+        help="Your own real-world estimate of how many hours it takes today to handle "
+        "one charge, start to finish. This is what drives the ROI math below — edit it "
+        "to match your actual experience.",
     )
-    st.caption("Auto-set based on your answer above — changing your current setup updates this.")
+    st.caption(
+        "Pre-filled based on your answer above — edit this to your own number, "
+        "it's what the ROI calculation actually uses."
+    )
 
     st.text_area(
         "Comments",
