@@ -781,7 +781,24 @@ with right:
             f"(current: {scenario_short_label})"
         )
 
-        st.caption("Time in-house annually — without Fern vs. with Fern")
+        st.markdown(
+            "**Annual in-house operations — without Fern vs. with Fern**"
+            if not is_law_firm
+            else "**Time in-house annually — without Fern vs. with Fern**"
+        )
+
+        if not is_law_firm:
+            st.caption("Charges handled in-house")
+            charge_rows = [
+                ("Without Fern", roi["charges_inhouse_today"], FERN_AMBER),
+                ("With Fern", roi["charges_inhouse_fern"], FERN_GREEN),
+            ]
+            st.altair_chart(
+                breakdown_chart(charge_rows, value_format=",.0f", value_prefix="", value_suffix=" charges"),
+                width="stretch",
+            )
+            st.caption("Time spent in-house")
+
         hours_rows = [
             ("Without Fern", roi["hours_inhouse_today"], FERN_AMBER),
             ("With Fern", roi["hours_inhouse_with_fern"], FERN_GREEN),
@@ -790,6 +807,20 @@ with right:
             breakdown_chart(hours_rows, value_format=",.0f", value_prefix="", value_suffix=" hrs"),
             width="stretch",
         )
+
+        if (
+            not is_law_firm
+            and roi["charges_inhouse_today"] > 0
+            and roi["hours_inhouse_today"] > 0
+            and roi["charges_inhouse_fern"] > roi["charges_inhouse_today"]
+            and roi["hours_inhouse_with_fern"] < roi["hours_inhouse_today"]
+        ):
+            pct_more_charges = (roi["charges_inhouse_fern"] / roi["charges_inhouse_today"] - 1) * 100
+            pct_less_time = (1 - roi["hours_inhouse_with_fern"] / roi["hours_inhouse_today"]) * 100
+            st.caption(
+                f"With Fern, your team handles {pct_more_charges:.0f}% more charges in-house "
+                f"with {pct_less_time:.0f}% less time spent."
+            )
 
         st.metric(
             "Year 1 net value" if is_law_firm else "Year 1 net savings",
