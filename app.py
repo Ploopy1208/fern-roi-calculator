@@ -442,12 +442,66 @@ def build_case_study_pdf(is_law_firm, session_mode, scenario_cfg, roi, use_ramp)
 
 
 def build_math_text(is_law_firm, scenario_key, scenario_cfg, roi):
+    """Mirrors the results UI top-to-bottom, using the same section headings and
+    "Without Fern" / "With Fern" wording as the metrics and charts above it, so a
+    formula is easy to find by matching it to what's on screen."""
+
+    # ---- 1. TIME SAVED ANNUALLY (matches the "Time saved annually" metric + caption) ----
     assumptions = "\n".join(
         f"  {'-> ' if key == scenario_key else '   '}{cfg['label']}: "
         f"{cfg['current_hours_per_charge']} hrs -> {cfg['hours_with_fern_per_charge']} hrs with Fern"
         for key, cfg in SCENARIOS.items()
     )
 
+    time_saved_section = f"""TIME SAVED ANNUALLY
+Typical time spent by setup (starting suggestions, by current tool):
+{assumptions}
+
+Your entered time spent per charge: {roi['current_hours_per_charge']} hrs -> \
+{roi['hours_with_fern_per_charge']:.0f} hrs with Fern (current: {scenario_cfg['label'].split(' - ', 1)[-1]})
+
+Time saved annually = Time spent in-house without Fern - Time spent in-house with Fern
+= {round(roi['hours_inhouse_today']):,} hrs - {round(roi['hours_inhouse_with_fern']):,} hrs \
+= {round(roi['total_hours_saved']):,} hrs"""
+
+    # ---- 2. ANNUAL IN-HOUSE OPERATIONS (matches the two "without Fern vs. with Fern" charts) ----
+    if is_law_firm:
+        operations_section = f"""TIME IN-HOUSE ANNUALLY — WITHOUT FERN VS. WITH FERN
+Without Fern = matters/year x hrs spent per matter
+= {round(roi['charges_inhouse_today']):,} x {roi['current_hours_per_charge']} hrs = {round(roi['hours_inhouse_today']):,} hrs
+With Fern = matters/year x hrs spent per matter with Fern
+= {round(roi['charges_inhouse_fern']):,} x {roi['hours_with_fern_per_charge']:.0f} hrs \
+= {round(roi['hours_inhouse_with_fern']):,} hrs"""
+    else:
+        sentence = ""
+        if (
+            roi["charges_inhouse_today"] > 0
+            and roi["hours_inhouse_today"] > 0
+            and roi["charges_inhouse_fern"] > roi["charges_inhouse_today"]
+            and roi["hours_inhouse_with_fern"] < roi["hours_inhouse_today"]
+        ):
+            pct_more_charges = (roi["charges_inhouse_fern"] / roi["charges_inhouse_today"] - 1) * 100
+            pct_less_time = (1 - roi["hours_inhouse_with_fern"] / roi["hours_inhouse_today"]) * 100
+            sentence = (
+                f"\n\nWith Fern, your team handles {pct_more_charges:.0f}% more charges in-house "
+                f"with {pct_less_time:.0f}% less time spent."
+            )
+
+        operations_section = f"""ANNUAL IN-HOUSE OPERATIONS — WITHOUT FERN VS. WITH FERN
+Charges handled in-house
+Without Fern = charges/year x % handled in-house today
+= {st.session_state.charges_per_year} x {st.session_state.inhouse_pct_today}% = {round(roi['charges_inhouse_today']):,} charges
+With Fern = charges/year x % handled in-house with Fern
+= {st.session_state.charges_per_year} x {st.session_state.inhouse_pct_fern}% = {round(roi['charges_inhouse_fern']):,} charges
+
+Time spent in-house
+Without Fern = charges handled in-house without Fern x hrs spent per charge
+= {round(roi['charges_inhouse_today']):,} x {roi['current_hours_per_charge']} hrs = {round(roi['hours_inhouse_today']):,} hrs
+With Fern = charges handled in-house with Fern x hrs spent per charge with Fern
+= {round(roi['charges_inhouse_fern']):,} x {roi['hours_with_fern_per_charge']:.0f} hrs \
+= {round(roi['hours_inhouse_with_fern']):,} hrs{sentence}"""
+
+    # ---- 3. YEAR 1 NET SAVINGS / NET VALUE (matches the metric + return/payback/ROI) ----
     rate_line = (
         ""
         if is_law_firm
@@ -458,58 +512,38 @@ def build_math_text(is_law_firm, scenario_key, scenario_cfg, roi):
 """
     )
 
-    # A law firm has no in-house/outside split (charges_inhouse_today == charges_inhouse_fern
-    # == all charges), so the split lines collapse to a single "hours saved" line for them.
+    value_label = "Year 1 net value" if is_law_firm else "Year 1 net savings"
+    rate_term = "billable rate" if is_law_firm else "inhouse effective hourly rate"
+    inhouse_value_label = "Billable capacity unlocked" if is_law_firm else "Inhouse time savings"
+    net_savings_section = f"""{value_label.upper()}
+{rate_line}{inhouse_value_label} = time saved annually x {rate_term}
+= {round(roi['total_hours_saved']):,} x {format_currency(roi['hourly_rate'])} = {format_currency(roi['inhouse_time_savings'])}"""
+
     if is_law_firm:
-        today_block = (
-            f"Cost today = matters/year x hours spent per charge x billable rate\n"
-            f"= {round(roi['charges_inhouse_today']):,} x {roi['current_hours_per_charge']} hrs x "
-            f"{format_currency(roi['hourly_rate'])} = {format_currency(roi['cost_without_fern'])}"
-        )
-        fern_block = (
-            f"Cost with Fern = matters/year x hours spent per charge with Fern x billable rate + Fern annual cost\n"
-            f"= {round(roi['charges_inhouse_fern']):,} x {roi['hours_with_fern_per_charge']:.0f} hrs x "
-            f"{format_currency(roi['hourly_rate'])} + {format_currency(roi['fern_annual_cost'])} "
-            f"= {format_currency(roi['cost_with_fern'])}"
-        )
+        net_savings_section += f"""
+
+Total value = Billable capacity unlocked
+= {format_currency(roi['total_value_year1_full'])}"""
     else:
-        today_block = f"""Cost today = in-house cost + outside counsel cost
-  In-house: {round(roi['charges_inhouse_today']):,} charges x {roi['current_hours_per_charge']} hrs x \
-{format_currency(roi['hourly_rate'])} = {format_currency(roi['inhouse_labor_cost_today'])}
-  Outside: {round(roi['charges_outside_today']):,} charges x {format_currency(roi['effective_outside_counsel_per_charge'])} \
-= {format_currency(roi['outside_cost_today'])}
-= {format_currency(roi['inhouse_labor_cost_today'])} + {format_currency(roi['outside_cost_today'])} \
-= {format_currency(roi['cost_without_fern'])}"""
+        net_savings_section += f"""
 
-        fern_block = f"""Cost with Fern = in-house cost + outside counsel cost + Fern annual cost
-  In-house: {round(roi['charges_inhouse_fern']):,} charges x {roi['hours_with_fern_per_charge']:.0f} hrs x \
-{format_currency(roi['hourly_rate'])} = {format_currency(roi['inhouse_labor_cost_with_fern'])}
-  Outside: {round(roi['charges_outside_fern']):,} charges x {format_currency(roi['effective_outside_counsel_per_charge'])} \
-= {format_currency(roi['outside_cost_with_fern'])}
-= {format_currency(roi['inhouse_labor_cost_with_fern'])} + {format_currency(roi['outside_cost_with_fern'])} + \
-{format_currency(roi['fern_annual_cost'])} = {format_currency(roi['cost_with_fern'])}"""
+Outside fees savings = outside counsel cost without Fern - outside counsel cost with Fern
+= {format_currency(roi['outside_cost_today'])} - {format_currency(roi['outside_cost_with_fern'])} \
+= {format_currency(roi['outside_fees_savings'])}
 
-    split_note = (
-        ""
-        if is_law_firm
-        else f"\nNote: the in-house share can differ before/after Fern — Fern makes in-house work "
-        f"faster, so you may plan to bring more charges in-house than you do today "
-        f"({st.session_state.inhouse_pct_today}% today -> {st.session_state.inhouse_pct_fern}% with Fern).\n"
-    )
+Total value = Inhouse time savings + Outside fees savings
+= {format_currency(roi['inhouse_time_savings'])} + {format_currency(roi['outside_fees_savings'])} \
+= {format_currency(roi['total_value_year1_full'])}"""
 
-    return f"""TYPICAL TIME SPENT BY SETUP (starting suggestions, by current tool)
-{assumptions}
+    net_savings_section += f"""
 
-Your entered time spent per charge: {roi['current_hours_per_charge']} hrs -> \
-{roi['hours_with_fern_per_charge']:.0f} hrs with Fern (this is what the math below uses)
-{split_note}
-{rate_line}{today_block}
-
-{fern_block}
-
-Net value = Cost today - Cost with Fern
-= {format_currency(roi['cost_without_fern'])} - {format_currency(roi['cost_with_fern'])} \
+{value_label} = Total value - Fern annual cost
+= {format_currency(roi['total_value_year1_full'])} - {format_currency(roi['fern_annual_cost'])} \
 = {format_currency(roi['net_value_year1_full'])}
+
+Return = Total value / Fern annual cost
+= {format_currency(roi['total_value_year1_full'])} / {format_currency(roi['fern_annual_cost'])} \
+= {roi['money_multiple']:.1f}x
 
 Payback period = Fern annual cost / (Total value / 12)
 = {format_currency(roi['fern_annual_cost'])} / ({format_currency(roi['total_value_year1_full'])} / 12) \
@@ -517,7 +551,50 @@ Payback period = Fern annual cost / (Total value / 12)
 
 3-year ROI = (3-year net value / 3-year Fern cost) x 100
 = ({format_currency(roi['three_year_net'])} / {format_currency(roi['three_year_cost'])}) x 100 \
-= {roi['roi_3_year']:.1f}%""".strip()
+= {roi['roi_3_year']:.1f}%"""
+
+    # ---- 4. ANNUAL COST — WITHOUT FERN VS. WITH FERN (matches the second chart card) ----
+    if is_law_firm:
+        cost_section = f"""ANNUAL COST — WITHOUT FERN VS. WITH FERN
+Without Fern = matters/year x hrs spent per matter x billable rate
+= {round(roi['charges_inhouse_today']):,} x {roi['current_hours_per_charge']} hrs x \
+{format_currency(roi['hourly_rate'])} = {format_currency(roi['cost_without_fern'])}
+
+With Fern = matters/year x hrs spent per matter with Fern x billable rate + Fern annual cost
+= {round(roi['charges_inhouse_fern']):,} x {roi['hours_with_fern_per_charge']:.0f} hrs x \
+{format_currency(roi['hourly_rate'])} + {format_currency(roi['fern_annual_cost'])} \
+= {format_currency(roi['cost_with_fern'])}"""
+    else:
+        cost_section = f"""ANNUAL COST — WITHOUT FERN VS. WITH FERN
+Without Fern = in-house cost + outside counsel cost
+  In-house: {round(roi['charges_inhouse_today']):,} charges x {roi['current_hours_per_charge']} hrs x \
+{format_currency(roi['hourly_rate'])} = {format_currency(roi['inhouse_labor_cost_today'])}
+  Outside: {round(roi['charges_outside_today']):,} charges x {format_currency(roi['effective_outside_counsel_per_charge'])} \
+= {format_currency(roi['outside_cost_today'])}
+= {format_currency(roi['inhouse_labor_cost_today'])} + {format_currency(roi['outside_cost_today'])} \
+= {format_currency(roi['cost_without_fern'])}
+
+With Fern = in-house cost + outside counsel cost + Fern annual cost
+  In-house: {round(roi['charges_inhouse_fern']):,} charges x {roi['hours_with_fern_per_charge']:.0f} hrs x \
+{format_currency(roi['hourly_rate'])} = {format_currency(roi['inhouse_labor_cost_with_fern'])}
+  Outside: {round(roi['charges_outside_fern']):,} charges x {format_currency(roi['effective_outside_counsel_per_charge'])} \
+= {format_currency(roi['outside_cost_with_fern'])}
+= {format_currency(roi['inhouse_labor_cost_with_fern'])} + {format_currency(roi['outside_cost_with_fern'])} + \
+{format_currency(roi['fern_annual_cost'])} = {format_currency(roi['cost_with_fern'])}"""
+
+    cost_section += f"""
+
+Net value = Annual cost without Fern - Annual cost with Fern
+= {format_currency(roi['cost_without_fern'])} - {format_currency(roi['cost_with_fern'])} \
+= {format_currency(roi['net_value_year1_full'])}"""
+
+    return f"""{time_saved_section}
+
+{operations_section}
+
+{net_savings_section}
+
+{cost_section}""".strip()
 
 
 def notify_slack(is_law_firm, session_mode, scenario_cfg, roi):
