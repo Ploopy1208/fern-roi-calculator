@@ -714,7 +714,7 @@ with st.container(border=True):
     else:
         st.caption("Instant results, download anytime.")
 
-left, right = st.columns(2, gap="large")
+left, right = st.columns([1, 2], gap="large")
 
 # ---- Input section -----------------------------------------------------
 with left:
