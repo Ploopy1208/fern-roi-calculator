@@ -140,11 +140,16 @@ def breakdown_chart(rows, value_format="$,.0f", value_prefix="$", value_suffix="
     order = df["Category"].tolist()
     colors = df["Color"].tolist()
 
+    # Pad the x-domain past the longest bar so its end label has room to render —
+    # otherwise it's clipped at the plot edge with nowhere left to draw.
+    max_amount = df["Amount"].max() or 1
+    x_scale = alt.Scale(domain=[0, max_amount * 1.25])
+
     bars = (
         alt.Chart(df)
         .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, height=26)
         .encode(
-            x=alt.X("Amount:Q", title=None, axis=alt.Axis(format=value_format, grid=False)),
+            x=alt.X("Amount:Q", title=None, scale=x_scale, axis=alt.Axis(format=value_format, grid=False)),
             y=alt.Y("Category:N", title=None, sort=order, axis=alt.Axis(labelLimit=160)),
             color=alt.Color("Category:N", scale=alt.Scale(domain=order, range=colors), legend=None),
             tooltip=[
@@ -157,7 +162,7 @@ def breakdown_chart(rows, value_format="$,.0f", value_prefix="$", value_suffix="
     labels = (
         alt.Chart(df)
         .mark_text(align="left", dx=6, color="#1a1a18")
-        .encode(x=alt.X("Amount:Q"), y=alt.Y("Category:N", sort=order), text=alt.Text("Label:N"))
+        .encode(x=alt.X("Amount:Q", scale=x_scale), y=alt.Y("Category:N", sort=order), text=alt.Text("Label:N"))
     )
     return (bars + labels).properties(height=len(df) * 42 + 20)
 
