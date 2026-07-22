@@ -925,7 +925,14 @@ with right:
             st.caption("Assumes freed hours convert to billed work at your stated rate.")
 
         with st.container(horizontal=True):
-            st.metric("Payback period", format_payback(roi["payback_months"]), border=True)
+            st.metric(
+                "Payback period",
+                format_payback(roi["payback_months"]),
+                border=True,
+                help="Fern has no upfront cost — this is how long it takes for the value "
+                "Fern delivers to exceed what you've spent on it so far, not time to "
+                "recoup a large initial investment.",
+            )
             st.metric("3-year ROI", f"{roi['roi_3_year']:.1f}%", border=True)
 
         st.toggle(
