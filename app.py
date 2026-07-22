@@ -115,6 +115,19 @@ def format_currency(num):
     return f"${round(num):,}"
 
 
+def format_payback(months):
+    """Months reads ambiguously when it's a fraction (is "0.9" days or months?) —
+    switch to whole days under 1 month, where it's unambiguous."""
+    if months <= 0:
+        return "Immediate"
+    if months < 1:
+        days = round(months * 30.44)  # average days/month
+        if days < 1:
+            return "Less than a day"
+        return f"{days} day{'s' if days != 1 else ''}"
+    return f"{months:.1f} months"
+
+
 def breakdown_chart(rows, value_format="$,.0f", value_prefix="$", value_suffix=""):
     """Horizontal bar chart for a small set of named amounts.
 
@@ -404,7 +417,7 @@ def build_case_study_pdf(is_law_firm, session_mode, scenario_cfg, roi, use_ramp)
     # ---- Key metrics ----
     h2("Key metrics")
     kv_row("Return", f"{roi['money_multiple']:.1f}x")
-    kv_row("Payback period", f"{roi['payback_months']:.1f} months")
+    kv_row("Payback period", format_payback(roi["payback_months"]))
     kv_row("3-year ROI", f"{roi['roi_3_year']:.1f}%")
     kv_row(
         f"3-year net value ({'adoption ramp' if use_ramp else 'full value'})",
@@ -547,7 +560,7 @@ Return = Total value / Fern annual cost
 
 Payback period = Fern annual cost / (Total value / 12)
 = {format_currency(roi['fern_annual_cost'])} / ({format_currency(roi['total_value_year1_full'])} / 12) \
-= {roi['payback_months']:.1f} months
+= {format_payback(roi['payback_months'])}
 
 3-year ROI = (3-year net value / 3-year Fern cost) x 100
 = ({format_currency(roi['three_year_net'])} / {format_currency(roi['three_year_cost'])}) x 100 \
@@ -628,7 +641,7 @@ def notify_slack(is_law_firm, session_mode, scenario_cfg, roi):
         f"{split_line}\n"
         f"*Net value (Year 1):* {format_currency(roi['net_value_year1_full'])}\n"
         f"*3-year ROI:* {roi['roi_3_year']:.1f}%\n"
-        f"*Payback period:* {roi['payback_months']:.1f} months\n"
+        f"*Payback period:* {format_payback(roi['payback_months'])}\n"
         f"*Downloaded:* {datetime.now().strftime('%Y-%m-%d %H:%M')}"
     )
 
@@ -912,7 +925,7 @@ with right:
             st.caption("Assumes freed hours convert to billed work at your stated rate.")
 
         with st.container(horizontal=True):
-            st.metric("Payback period", f"{roi['payback_months']:.1f} mo", border=True)
+            st.metric("Payback period", format_payback(roi["payback_months"]), border=True)
             st.metric("3-year ROI", f"{roi['roi_3_year']:.1f}%", border=True)
 
         st.toggle(
