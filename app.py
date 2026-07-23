@@ -228,11 +228,17 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
         if pricing_model == "Per charge"
         else (fern_monthly_fixed or 3000) * 12
     )
-    cost_with_fern = inhouse_labor_cost_with_fern + outside_cost_with_fern + fern_annual_cost
+    # Labor cost alone (in-house + outside), excluding Fern's own subscription fee — this is
+    # what the 6-bar "Annual labor costs" chart compares, separately from cost_with_fern below
+    # (which folds Fern's fee in, for the "Annual cost" total-spend comparison).
+    total_labor_with_fern = inhouse_labor_cost_with_fern + outside_cost_with_fern
+
+    cost_with_fern = total_labor_with_fern + fern_annual_cost
 
     net_value_year1_full = total_value_year1_full - fern_annual_cost
     payback_months = fern_annual_cost / (total_value_year1_full / 12) if total_value_year1_full > 0 else 0
     money_multiple = total_value_year1_full / fern_annual_cost if fern_annual_cost > 0 else 0
+    roi_1_year = (net_value_year1_full / fern_annual_cost) * 100 if fern_annual_cost > 0 else 0
 
     yearly_ramp = []
     for pct in RAMP_PCT:
@@ -272,9 +278,11 @@ def calculate_roi(is_law_firm, scenario_cfg, pricing_model, use_ramp):
         "fern_annual_cost": fern_annual_cost,
         "cost_without_fern": cost_without_fern,
         "cost_with_fern": cost_with_fern,
+        "total_labor_with_fern": total_labor_with_fern,
         "net_value_year1_full": net_value_year1_full,
         "payback_months": max(0, payback_months),
         "money_multiple": money_multiple,
+        "roi_1_year": max(0, roi_1_year),
         "yearly_ramp": yearly_ramp,
         "three_year_net": three_year_net,
         "three_year_cost": three_year_cost,
@@ -864,17 +872,19 @@ with right:
     with st.container(border=True):
         st.subheader("Your Business Impact Results")
 
-        st.metric(
-            "Time saved annually",
-            f"{round(roi['total_hours_saved']):,} hours",
-            border=True,
-        )
-        scenario_short_label = scenario_cfg["label"].split(" - ", 1)[-1]
-        st.caption(
-            f"Each {'matter' if is_law_firm else 'in-house charge'} drops from "
-            f"~{roi['current_hours_per_charge']} hrs to ~{roi['hours_with_fern_per_charge']:.0f} hrs with Fern "
-            f"(current: {scenario_short_label})"
-        )
+        if (
+            not is_law_firm
+            and roi["charges_inhouse_today"] > 0
+            and roi["hours_inhouse_today"] > 0
+            and roi["charges_inhouse_fern"] > roi["charges_inhouse_today"]
+            and roi["hours_inhouse_with_fern"] < roi["hours_inhouse_today"]
+        ):
+            pct_more_charges = (roi["charges_inhouse_fern"] / roi["charges_inhouse_today"] - 1) * 100
+            pct_less_time = (1 - roi["hours_inhouse_with_fern"] / roi["hours_inhouse_today"]) * 100
+            st.caption(
+                f"With Fern, your team handles {pct_more_charges:.0f}% more charges in-house "
+                f"with {pct_less_time:.0f}% less time spent."
+            )
 
         st.markdown(
             "**Annual in-house operations — without Fern vs. with Fern**"
@@ -903,48 +913,6 @@ with right:
             width="stretch",
         )
 
-        if (
-            not is_law_firm
-            and roi["charges_inhouse_today"] > 0
-            and roi["hours_inhouse_today"] > 0
-            and roi["charges_inhouse_fern"] > roi["charges_inhouse_today"]
-            and roi["hours_inhouse_with_fern"] < roi["hours_inhouse_today"]
-        ):
-            pct_more_charges = (roi["charges_inhouse_fern"] / roi["charges_inhouse_today"] - 1) * 100
-            pct_less_time = (1 - roi["hours_inhouse_with_fern"] / roi["hours_inhouse_today"]) * 100
-            st.caption(
-                f"With Fern, your team handles {pct_more_charges:.0f}% more charges in-house "
-                f"with {pct_less_time:.0f}% less time spent."
-            )
-
-        st.metric(
-            "Year 1 net value" if is_law_firm else "Year 1 net savings",
-            format_currency(roi["net_value_year1_full"]),
-            border=True,
-        )
-        st.caption(
-            f"≈ {roi['money_multiple']:.1f}x return — every $1 spent on Fern returns "
-            f"about ${roi['money_multiple']:.1f}"
-        )
-        if is_law_firm:
-            st.caption("Assumes freed hours convert to billed work at your stated rate.")
-
-        with st.container(horizontal=True):
-            st.metric(
-                "Payback period",
-                format_payback(roi["payback_months"]),
-                border=True,
-                help="Fern has no upfront cost — this is how long it takes for the value "
-                "Fern delivers to exceed what you've spent on it so far, not time to "
-                "recoup a large initial investment.",
-            )
-            st.metric("3-year ROI", f"{roi['roi_3_year']:.1f}%", border=True)
-
-        st.toggle(
-            "Use conservative 3-year adoption ramp (40% → 70% → 100%) instead of full value from Year 1",
-            key="use_ramp",
-        )
-
         if session_mode == "Work through this with a Fern rep":
             with st.container(border=True):
                 st.markdown(":material/mail: **Get this sent to you**")
@@ -970,24 +938,71 @@ with right:
         if downloaded:
             notify_slack(is_law_firm, session_mode, scenario_cfg, roi)
 
-    # ---- Savings breakdown ----
+    # ---- Labor costs breakdown ----
     with st.container(border=True):
-        st.subheader("Annual cost — without Fern vs. with Fern")
+        st.subheader("Annual labor costs — without Fern vs. with Fern")
 
-        cost_rows = [
-            ("Without Fern", roi["cost_without_fern"], FERN_AMBER),
-            ("With Fern", roi["cost_with_fern"], FERN_GREEN),
-        ]
-        st.altair_chart(breakdown_chart(cost_rows), width="stretch")
+        st.write(
+            "With Fern, your labor costs change from "
+            f"{format_currency(roi['cost_without_fern']).replace('$', '\\$')} "
+            f"to {format_currency(roi['total_labor_with_fern']).replace('$', '\\$')}."
+        )
+        if not is_law_firm:
+            st.write(
+                "Outside counsel savings of "
+                f"{format_currency(roi['outside_fees_savings']).replace('$', '\\$')}."
+            )
 
-        pct_reduction = (
-            (roi["cost_without_fern"] - roi["cost_with_fern"]) / roi["cost_without_fern"] * 100
-            if roi["cost_without_fern"] > 0
-            else 0
+        if is_law_firm:
+            labor_rows = [
+                ("Total labor — Without Fern", roi["cost_without_fern"], FERN_AMBER),
+                ("Total labor — With Fern", roi["total_labor_with_fern"], FERN_GREEN),
+            ]
+        else:
+            labor_rows = [
+                ("In-house labor — Without Fern", roi["inhouse_labor_cost_today"], FERN_AMBER),
+                ("Outside counsel — Without Fern", roi["outside_cost_today"], FERN_AMBER),
+                ("Total labor — Without Fern", roi["cost_without_fern"], FERN_AMBER),
+                ("In-house labor — With Fern", roi["inhouse_labor_cost_with_fern"], FERN_GREEN),
+                ("Outside counsel — With Fern", roi["outside_cost_with_fern"], FERN_GREEN),
+                ("Total labor — With Fern", roi["total_labor_with_fern"], FERN_GREEN),
+            ]
+        st.altair_chart(breakdown_chart(labor_rows), width="stretch")
+
+        with st.container(horizontal=True):
+            st.metric(
+                "Annual labor cost saving",
+                format_currency(roi["total_value_year1_full"]),
+                border=True,
+            )
+            st.metric("Annual Fern cost", format_currency(roi["fern_annual_cost"]), border=True)
+
+        st.metric(
+            "Year 1 net value" if is_law_firm else "Year 1 net savings",
+            format_currency(roi["net_value_year1_full"]),
+            border=True,
         )
         st.caption(
-            f"Fern saves {format_currency(roi['net_value_year1_full'])} per year — "
-            f"a {pct_reduction:.0f}% reduction versus handling this caseload without it."
+            f"≈ {roi['money_multiple']:.1f}x return — every \\$1 spent on Fern returns "
+            f"about \\${roi['money_multiple']:.1f}"
+        )
+        if is_law_firm:
+            st.caption("Assumes freed hours convert to billed work at your stated rate.")
+
+        with st.container(horizontal=True):
+            st.metric(
+                "Payback period",
+                format_payback(roi["payback_months"]),
+                border=True,
+                help="Fern has no upfront cost — this is how long it takes for the value "
+                "Fern delivers to exceed what you've spent on it so far, not time to "
+                "recoup a large initial investment.",
+            )
+            st.metric("Year 1 ROI", f"{roi['roi_1_year']:.1f}%", border=True)
+
+        st.toggle(
+            "Use conservative 3-year adoption ramp (40% → 70% → 100%) instead of full value from Year 1",
+            key="use_ramp",
         )
 
         if st.session_state.use_ramp:
